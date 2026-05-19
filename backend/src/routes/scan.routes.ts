@@ -41,7 +41,7 @@ const upload = multer({
 
 const router = Router()
 
-router.post('/scan', upload.single('file'), (req, res) => {
+router.post('/scan', upload.single('file'), async (req, res) => {
   const uploaded = req.file
 
   if (!uploaded) {
@@ -78,9 +78,22 @@ router.post('/scan', upload.single('file'), (req, res) => {
     typeof req.body.displayFileName === 'string' ? req.body.displayFileName : undefined,
     fileType,
   )
-  const result = generateScanResult(displayName, fileType, userType, scanType)
-  cleanup(uploaded.path)
-  res.json(result)
+  try {
+    const fileSize = fs.statSync(uploaded.path).size
+    const result = await generateScanResult(
+      uploaded.path,
+      displayName,
+      fileType,
+      userType,
+      scanType,
+      fileSize,
+    )
+    cleanup(uploaded.path)
+    res.json(result)
+  } catch {
+    cleanup(uploaded.path)
+    res.status(500).json({ error: 'Failed to analyze the uploaded file.' })
+  }
 })
 
 function cleanup(filePath: string) {

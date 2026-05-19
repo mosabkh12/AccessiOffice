@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 80" role="img" aria-hidden="true">
+  <defs>
+    <linearGradient id="xls-page" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#3cb878"/>
+      <stop offset="100%" stop-color="#1e6b41"/>
+    </linearGradient>
+    <linearGradient id="xls-fold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6fd49a"/>
+      <stop offset="100%" stop-color="#2d8f5c"/>
+    </linearGradient>
+    <filter id="xls-shadow" x="-20%" y="-10%" width="140%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#14532d" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  <g filter="url(#xls-shadow)">
+    <path fill="url(#xls-page)" d="M8 4h36l12 12v60a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V8a4 4 0 0 1 4-4z"/>
+    <path fill="url(#xls-fold)" d="M44 4v12h12L44 4z"/>
+    <path fill="#fff" fill-opacity="0.1" d="M8 4h36l12 12v4H8V4z"/>
+  </g>
+  <g fill="none" stroke="#fff" stroke-opacity="0.35" stroke-width="0.8">
+    <rect x="14" y="26" width="36" height="24" rx="1.5"/>
+    <path d="M14 34h36M14 42h36M26 26v24M38 26v24"/>
+  </g>
+  <rect x="15" y="27" width="10" height="6" fill="#fff" fill-opacity="0.25"/>
+  <text x="32" y="68" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700" fill="#fff">X</text>
+</svg>

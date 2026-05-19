@@ -17,6 +17,9 @@ const FILE_LABELS = { docx: 'Word', pptx: 'PowerPoint', xlsx: 'Excel' }
 const SUMMARY_DEFAULT =
   'על פי ממצאי הסריקה, הקובץ כולל בעיות נגישות שיש לתקן לפני פרסום או שיתוף.'
 
+const NO_ISSUES_MSG =
+  'לא נמצאו בעיות נגישות משמעותיות בסריקה האוטומטית. מומלץ לבצע בדיקה ידנית לפני פרסום.'
+
 export default function ResultsPage() {
   const navigate = useNavigate()
   const { scanData } = useScan()
@@ -78,13 +81,19 @@ export default function ResultsPage() {
 
       <article className="card summary-banner">
         <h2 className="summary-banner__title">סיכום</h2>
-        <p>{summary || SUMMARY_DEFAULT}</p>
+        <p>{totalIssues === 0 ? NO_ISSUES_MSG : summary || SUMMARY_DEFAULT}</p>
       </article>
 
       <section className="card">
-        <h2 className="card-title">פירוט בעיות נגישות</h2>
-        <p className="card-hint">לחצו על &quot;פרטים&quot; לצפייה בהשפעה, המלצה והסבר WCAG.</p>
-        <IssuesTable issues={issues} />
+        <h2 className="card-title">פירוט בעיות נגישות ({totalIssues})</h2>
+        {totalIssues === 0 ? (
+          <p className="card-hint">{NO_ISSUES_MSG}</p>
+        ) : (
+          <>
+            <p className="card-hint">לחצו על &quot;פרטים&quot; לצפייה בהשפעה, המלצה והסבר WCAG.</p>
+            <IssuesTable issues={issues} />
+          </>
+        )}
       </section>
 
       <div className="btn-group no-print">

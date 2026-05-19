@@ -1,20 +1,26 @@
 import Button from '../components/Button.jsx'
+import iconWord from '../assets/icon-word.svg'
+import iconPowerPoint from '../assets/icon-powerpoint.svg'
+import iconExcel from '../assets/icon-excel.svg'
 
 const FILE_TYPES = [
   {
-    icon: '📄',
+    icon: iconWord,
+    iconAlt: 'סמל Microsoft Word',
     title: 'Word (.docx)',
     desc: 'בדיקת מסמכי טקסט, כותרות, קישורים וטבלאות.',
     checks: ['טקסט חלופי', 'מבנה כותרות', 'קישורים', 'ניגודיות'],
   },
   {
-    icon: '📊',
+    icon: iconPowerPoint,
+    iconAlt: 'סמל Microsoft PowerPoint',
     title: 'PowerPoint (.pptx)',
     desc: 'בדיקת מצגות, שקופיות, סדר קריאה וניגודיות.',
     checks: ['כותרות שקופית', 'תמונות', 'סדר קריאה', 'גודל גופן'],
   },
   {
-    icon: '📈',
+    icon: iconExcel,
+    iconAlt: 'סמל Microsoft Excel',
     title: 'Excel (.xlsx)',
     desc: 'בדיקת גיליונות, טבלאות ומבנה נתונים.',
     checks: ['שורת כותרת', 'תאים ממוזגים', 'שם גיליון', 'ניגודיות'],
@@ -65,7 +71,17 @@ export default function HomePage() {
         <div className="file-type-grid">
           {FILE_TYPES.map((ft) => (
             <article key={ft.title} className="file-type-card card">
-              <span className="file-type-card__icon" aria-hidden="true">{ft.icon}</span>
+              <div className="file-type-card__icon-wrap">
+                <img
+                  className="file-type-card__icon"
+                  src={ft.icon}
+                  alt={ft.iconAlt}
+                  width={56}
+                  height={70}
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
               <h3>{ft.title}</h3>
               <p>{ft.desc}</p>
               <ul className="check-tags">

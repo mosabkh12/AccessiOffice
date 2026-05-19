@@ -59,6 +59,12 @@ export const WCAG_RULES = {
     level: 'AA',
     explanationHe: 'כותרות ותוויות תיאוריות מסייעות להבנת מבנה המסמך ותוכנו.',
   },
+  'reading-level': {
+    criterion: '3.1.5 Reading Level',
+    principle: 'Understandable',
+    level: 'AAA',
+    explanationHe: 'תוכן ארוך ומורכב מדי עלול להקשות על קריאה והבנה, במיוחד למשתמשים עם לקויות קוגניטיביות.',
+  },
 } as const satisfies Record<string, WcagRule>
 
 export type WcagRuleKey = keyof typeof WCAG_RULES

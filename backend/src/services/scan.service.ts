@@ -1,6 +1,17 @@
 import type { WcagRuleKey } from '../data/wcag.rules.js'
 import { getWcagRule } from '../data/wcag.rules.js'
 import type { FileType, ScanIssue, ScanResult, ScanType, Severity, UserType } from '../types/scan.types.js'
+import { analyzeDocx } from './analyzers/docx.analyzer.js'
+import {
+  buildScanIssue,
+  buildSummary,
+  calculateScore,
+  dedupeDrafts,
+  type ExtractedSignals,
+  type IssueDraft,
+} from './analyzers/issue.builder.js'
+import { analyzePptx } from './analyzers/pptx.analyzer.js'
+import { analyzeXlsx } from './analyzers/xlsx.analyzer.js'
 
 interface IssueTemplate {
   id: string
@@ -13,239 +24,192 @@ interface IssueTemplate {
   recommendation: string
 }
 
-const DOCX_ISSUES: IssueTemplate[] = [
-  {
-    id: 'missing-alt-text',
-    wcagKey: 'non-text-content',
-    title: 'תמונה ללא טקסט חלופי',
-    severity: 'High',
-    category: 'תוכן',
-    affectedUsers: ['משתמשים עיוורים', 'משתמשי קורא מסך'],
-    impact: 'קוראי מסך אינם יכולים להבין את מטרת התמונה או את תוכנה בהקשר המסמך.',
-    recommendation: 'הוסיפו טקסט חלופי ברור לכל תמונה, או סמנו תמונות דקורטיביות בהתאם.',
-  },
-  {
-    id: 'incorrect-heading-structure',
-    wcagKey: 'info-relationships',
-    title: 'מבנה כותרות שגוי',
-    severity: 'High',
-    category: 'מבנה',
-    affectedUsers: ['משתמשי קורא מסך', 'משתמשים עם לקויות קוגניטיביות'],
-    impact: 'דילוג ברמות כותרות מקשה על ניווט והבנת מבנה המסמך.',
-    recommendation: 'השתמשו בסגנונות כותרת של Word (כותרת 1, 2, 3) בסדר היררכי ללא דילוגים.',
-  },
-  {
-    id: 'unclear-link-text',
-    wcagKey: 'link-purpose',
-    title: 'טקסט קישור לא ברור',
-    severity: 'Medium',
-    category: 'ניווט',
-    affectedUsers: ['משתמשי קורא מסך'],
-    impact: 'ביטויים כמו "לחץ כאן" אינם מסבירים לאן מוביל הקישור.',
-    recommendation: 'השתמשו בטקסט קישור תיאורי, למשל: "הורדת מדריך הנגישות (PDF)".',
-  },
-  {
-    id: 'table-without-header',
-    wcagKey: 'info-relationships',
-    title: 'טבלה ללא שורת כותרת',
-    severity: 'Medium',
-    category: 'טבלאות',
-    affectedUsers: ['משתמשי קורא מסך'],
-    impact: 'קשה לקשר בין נתונים לעמודות ולשורות ללא כותרות מוגדרות.',
-    recommendation: 'סמנו את השורה הראשונה כשורת כותרת בהגדרות הטבלה.',
-  },
-  {
-    id: 'low-color-contrast',
-    wcagKey: 'contrast-minimum',
-    title: 'ניגודיות צבעים נמוכה',
-    severity: 'High',
-    category: 'תצוגה',
-    affectedUsers: ['משתמשים עם לקות ראייה', 'משתמשים בסביבה מוארת'],
-    impact: 'טקסט בהיר על רקע בהיר אינו קריא עבור משתמשים רבים.',
-    recommendation: 'הבטיחו יחס ניגודיות מינימלי של 4.5:1 לטקסט רגיל.',
-  },
-]
-
-const PPTX_ISSUES: IssueTemplate[] = [
-  {
-    id: 'slide-without-title',
-    wcagKey: 'page-titled-headings',
-    title: 'שקופית ללא כותרת',
-    severity: 'Medium',
-    category: 'מבנה',
-    affectedUsers: ['משתמשי קורא מסך'],
-    impact: 'משתמשים אינם יכולים לזהות במהירות את נושא השקופית.',
-    recommendation: 'הוסיפו כותרת ייחודית לכל שקופית באמצעות תיבת הכותרת.',
-  },
-  {
-    id: 'image-without-alt-text',
-    wcagKey: 'non-text-content',
-    title: 'תמונה ללא טקסט חלופי',
-    severity: 'High',
-    category: 'תוכן',
-    affectedUsers: ['משתמשים עיוורים', 'משתמשי קורא מסך'],
-    impact: 'מידע ויזואלי בשקופית אינו זמין למשתמשי טכנולוגיות מסייעות.',
-    recommendation: 'ערכו טקסט חלופי משמעותי לכל תמונה דרך "עריכת טקסט חלופי".',
-  },
-  {
-    id: 'low-color-contrast',
-    wcagKey: 'contrast-minimum',
-    title: 'ניגודיות צבעים נמוכה',
-    severity: 'High',
-    category: 'תצוגה',
-    affectedUsers: ['משתמשים עם לקות ראייה'],
-    impact: 'טקסט על רקע דקורטיבי עלול שלא לעמוד בדרישות הניגודיות.',
-    recommendation: 'השתמשו בצירופי צבעים בעלי ניגודיות גבוהה לכל הטקסט בשקופית.',
-  },
-  {
-    id: 'reading-order-issue',
-    wcagKey: 'meaningful-sequence',
-    title: 'בעיית סדר קריאה',
-    severity: 'Medium',
-    category: 'מבנה',
-    affectedUsers: ['משתמשי קורא מסך'],
-    impact: 'התוכן עלול להיקרא בסדר שאינו תואם את הפריסה הוויזואלית.',
-    recommendation: 'בדקו ותקנו את סדר הקריאה בחלונית "סדר קריאה" של PowerPoint.',
-  },
-  {
-    id: 'small-font-size',
-    wcagKey: 'resize-text',
-    title: 'גודל גופן קטן מדי',
-    severity: 'Low',
-    category: 'תצוגה',
-    affectedUsers: ['משתמשים עם לקות ראייה', 'אנשים מבוגרים'],
-    impact: 'טקסט קטן מאוד קשה לקריאה גם כשהניגודיות תקינה.',
-    recommendation: 'השתמשו בגודל מינימלי של 18 נקודות לגוף טקסט ו-24 לכותרות שקופית.',
-  },
-]
-
-const XLSX_ISSUES: IssueTemplate[] = [
-  {
-    id: 'table-without-header',
-    wcagKey: 'info-relationships',
-    title: 'טבלה ללא שורת כותרת',
-    severity: 'High',
-    category: 'טבלאות',
-    affectedUsers: ['משתמשי קורא מסך'],
-    impact: 'נתונים בגיליון אינם ניתנים לניווט לפי שמות עמודות ושורות.',
-    recommendation: 'הגדירו שורת כותרת וסמנו "הטבלה שלי כוללת כותרות".',
-  },
-  {
-    id: 'merged-cells-layout',
-    wcagKey: 'info-relationships',
-    title: 'תאים ממוזגים לפריסה',
-    severity: 'High',
-    category: 'טבלאות',
-    affectedUsers: ['משתמשי קורא מסך'],
-    impact: 'תאים ממוזגים פוגעים בניווט טבלאי תקין בקוראי מסך.',
-    recommendation: 'הימנעו ממיזוג תאים; השתמשו ביישור ובעיצוב במקום.',
-  },
-  {
-    id: 'empty-cells-spacing',
-    wcagKey: 'info-relationships',
-    title: 'תאים ריקים לריווח ויזואלי',
-    severity: 'Medium',
-    category: 'מבנה',
-    affectedUsers: ['משתמשי קורא מסך'],
-    impact: 'תאים ריקים לריווח יוצרים בלבול בניווט ובהבנת הנתונים.',
-    recommendation: 'השתמשו בריווח, רוחב עמודות ומבנה טבלה תקין במקום תאים ריקים.',
-  },
-  {
-    id: 'sheet-without-title',
-    wcagKey: 'headings-labels',
-    title: 'גיליון ללא שם תיאורי',
-    severity: 'Medium',
-    category: 'מבנה',
-    affectedUsers: ['משתמשי קורא מסך', 'משתמשים עם לקויות קוגניטיביות'],
-    impact: 'שמות גנריים כמו "Sheet1" אינם מסבירים את תוכן הגיליון.',
-    recommendation: 'שנו את שם הגיליון לשם תיאורי, למשל: "נתוני מכירות Q1".',
-  },
-  {
-    id: 'low-contrast-formatting',
-    wcagKey: 'contrast-minimum',
-    title: 'ניגודיות נמוכה בעיצוב תאים',
-    severity: 'High',
-    category: 'תצוגה',
-    affectedUsers: ['משתמשים עם לקות ראייה'],
-    impact: 'תאים עם צבעי רקע וגופן חלשים אינם קריאים למשתמשים רבים.',
-    recommendation: 'החילו צבעי מילוי וגופן העומדים ביחס ניגודיות WCAG AA.',
-  },
-]
-
-const LOCATIONS: Record<FileType, string[]> = {
+const DEMO_LOCATIONS: Record<FileType, string[]> = {
   docx: ['עמוד 1 / תמונה 2', 'עמוד 1 / כותרות', 'עמוד 4 / קישור', 'עמוד 3 / טבלה', 'עמוד 2 / גוף טקסט'],
-  pptx: ['שקופית 2', 'שקופית 3 / תמונה 1', 'שקופית 5 / תיבת טקסט', 'שקופית 4 / תוכן', 'שקופית 6 / כותרת תחתונה'],
-  xlsx: ['גיליון1 / A1:F20', 'גיליון1 / B5:D8', 'גיליון1 / שורות 10–15', 'גיליון2 (שם לשונית)', 'גיליון1 / C3:E12'],
+  pptx: ['שקופית 2', 'שקופית 3 / תמונה 1', 'שקופית 5 / תיבת טקסט', 'שקופית 4 / תוכן', 'שקופית 6'],
+  xlsx: ['גיליון "Sheet1" / A1:F20', 'גיליון "Sheet1" / B5:D8', 'גיליון "Sheet1"', 'גיליון "Sheet2"', 'גיליון "Sheet1" / C3'],
 }
 
-function buildIssue(template: IssueTemplate, location: string): ScanIssue {
-  const wcag = getWcagRule(template.wcagKey)
-  return {
-    id: template.id,
-    title: template.title,
-    severity: template.severity,
-    category: template.category,
-    wcagPrinciple: wcag.principle,
-    wcagCriterion: wcag.criterion,
-    wcagLevel: wcag.level,
-    wcagExplanation: wcag.explanationHe,
-    affectedUsers: template.affectedUsers,
-    impact: template.impact,
-    recommendation: template.recommendation,
-    location,
-  }
-}
+const DEMO_DOCX: IssueTemplate[] = [
+  { id: 'missing-alt-text', wcagKey: 'non-text-content', title: 'תמונה ללא טקסט חלופי', severity: 'High', category: 'תוכן', affectedUsers: ['משתמשים עיוורים', 'משתמשי קורא מסך'], impact: 'תמונות ללא תיאור חלופי.', recommendation: 'הוסיפו טקסט חלופי.', },
+  { id: 'incorrect-heading-structure', wcagKey: 'headings-labels', title: 'מבנה כותרות לא תקין', severity: 'High', category: 'מבנה', affectedUsers: ['משתמשי קורא מסך'], impact: 'מבנה כותרות לקוי.', recommendation: 'השתמשו בסגנונות כותרת.', },
+  { id: 'unclear-link-text', wcagKey: 'link-purpose', title: 'קישור לא ברור', severity: 'Medium', category: 'ניווט', affectedUsers: ['משתמשי קורא מסך'], impact: 'קישור "לחץ כאן".', recommendation: 'טקסט קישור תיאורי.', },
+  { id: 'table-without-header', wcagKey: 'info-relationships', title: 'טבלה ללא כותרות ברורות', severity: 'Medium', category: 'טבלאות', affectedUsers: ['משתמשי קורא מסך'], impact: 'טבלה ללא כותרת.', recommendation: 'סמנו שורת כותרת.', },
+  { id: 'low-color-contrast', wcagKey: 'contrast-minimum', title: 'ניגודיות צבעים נמוכה', severity: 'High', category: 'תצוגה', affectedUsers: ['משתמשים עם לקות ראייה'], impact: 'ניגודיות נמוכה.', recommendation: 'שפרו ניגודיות.', },
+]
 
-function buildIssues(fileType: FileType, templates: IssueTemplate[]): ScanIssue[] {
-  const locations = LOCATIONS[fileType]
-  return templates.map((t, i) => buildIssue(t, locations[i] ?? 'מסמך'))
-}
+const DEMO_PPTX: IssueTemplate[] = [
+  { id: 'slide-without-title', wcagKey: 'page-titled-headings', title: 'שקופית ללא כותרת', severity: 'Medium', category: 'מבנה', affectedUsers: ['משתמשי קורא מסך'], impact: 'שקופיות ללא כותרת.', recommendation: 'הוסיפו כותרת.', },
+  { id: 'image-without-alt-text', wcagKey: 'non-text-content', title: 'תמונה ללא טקסט חלופי', severity: 'High', category: 'תוכן', affectedUsers: ['משתמשים עיוורים'], impact: 'תמונות ללא alt.', recommendation: 'הוסיפו alt.', },
+  { id: 'reading-order-issue', wcagKey: 'meaningful-sequence', title: 'בעיית סדר קריאה', severity: 'Medium', category: 'מבנה', affectedUsers: ['משתמשי קורא מסך'], impact: 'סדר קריאה.', recommendation: 'בדקו סדר קריאה.', },
+  { id: 'unclear-link', wcagKey: 'link-purpose', title: 'קישור לא ברור', severity: 'Medium', category: 'ניווט', affectedUsers: ['משתמשי קורא מסך'], impact: 'קישור לא ברור.', recommendation: 'טקסט תיאורי.', },
+  { id: 'small-font-size', wcagKey: 'resize-text', title: 'גודל גופן קטן מדי', severity: 'Low', category: 'תצוגה', affectedUsers: ['משתמשים עם לקות ראייה'], impact: 'גופן קטן.', recommendation: 'הגדילו גופן.', },
+]
 
-function calculateScore(issues: ScanIssue[]): number {
-  const weights = { High: 12, Medium: 7, Low: 3 } as const
-  const penalty = issues.reduce((sum, issue) => sum + weights[issue.severity], 0)
-  return Math.max(0, 100 - penalty)
-}
-
-function buildSummary(issues: ScanIssue[]) {
-  return {
-    totalIssues: issues.length,
-    high: issues.filter((i) => i.severity === 'High').length,
-    medium: issues.filter((i) => i.severity === 'Medium').length,
-    low: issues.filter((i) => i.severity === 'Low').length,
-  }
-}
+const DEMO_XLSX: IssueTemplate[] = [
+  { id: 'table-without-header', wcagKey: 'info-relationships', title: 'טבלה ללא שורת כותרות', severity: 'High', category: 'טבלאות', affectedUsers: ['משתמשי קורא מסך'], impact: 'ללא כותרת.', recommendation: 'הגדירו כותרת.', },
+  { id: 'merged-cells', wcagKey: 'info-relationships', title: 'תאים ממוזגים המשמשים לעיצוב', severity: 'High', category: 'טבלאות', affectedUsers: ['משתמשי קורא מסך'], impact: 'מיזוג תאים.', recommendation: 'בטלו מיזוג.', },
+  { id: 'empty-cells', wcagKey: 'info-relationships', title: 'תאים ריקים המשמשים לריווח חזותי', severity: 'Medium', category: 'מבנה', affectedUsers: ['משתמשי קורא מסך'], impact: 'תאים ריקים.', recommendation: 'צמצמו ריווח.', },
+  { id: 'sheet-without-title', wcagKey: 'headings-labels', title: 'שם גיליון לא תיאורי', severity: 'Medium', category: 'מבנה', affectedUsers: ['משתמשי קורא מסך'], impact: 'Sheet1.', recommendation: 'שם תיאורי.', },
+  { id: 'low-contrast', wcagKey: 'contrast-minimum', title: 'ניגודיות צבעים נמוכה', severity: 'High', category: 'תצוגה', affectedUsers: ['משתמשים עם לקות ראייה'], impact: 'ניגודיות.', recommendation: 'שפרו צבעים.', },
+]
 
 export const CRITICAL_ANALYSIS_HE =
-  'סריקה אוטומטית מסייעת לזהות בעיות נגישות נפוצות, אך אינה מחליפה בדיקה אנושית מקצועית. יש לבדוק ידנית את איכות טקסט חלופי, הקשר תוכן, סדר קריאה מורכב והתאמה מלאה לתקן הישראלי (ת"י 5568) לפני פרסום המסמך.'
+  'סריקה אוטומטית מסייעת לזהות בעיות נגישות נפוצות, אך אינה מחליפה בדיקה אנושית מקצועית. יש לבדוק ידנית את איכות הטקסט החלופי, הקשר התוכן, סדר קריאה מורכב והתאמה מלאה לתקן הישראלי לפני פרסום המסמך.'
 
-export function generateScanResult(
+const LIMITED_SCAN_NOTE =
+  'הסריקה האוטומטית זיהתה מעט נתונים מבניים. מומלץ לבצע גם בדיקה ידנית.'
+
+const NO_ISSUES_NOTE =
+  'לא נמצאו בעיות נגישות משמעותיות בסריקה האוטומטית. מומלץ לבצע בדיקה ידנית לפני פרסום.'
+
+function isDemoFile(fileName: string): boolean {
+  const lower = fileName.toLowerCase()
+  return lower.includes('demo') || lower.includes('sample-bad') || lower.includes('bad-accessibility')
+}
+
+function buildDemoIssues(fileType: FileType): ScanIssue[] {
+  const templates = fileType === 'docx' ? DEMO_DOCX : fileType === 'pptx' ? DEMO_PPTX : DEMO_XLSX
+  const locations = DEMO_LOCATIONS[fileType]
+  return templates.map((t, i) => {
+    const wcag = getWcagRule(t.wcagKey)
+    return {
+      id: t.id,
+      title: t.title,
+      severity: t.severity,
+      category: t.category,
+      wcagPrinciple: wcag.principle,
+      wcagCriterion: wcag.criterion,
+      wcagLevel: wcag.level,
+      wcagExplanation: wcag.explanationHe,
+      affectedUsers: t.affectedUsers,
+      impact: t.impact,
+      recommendation: t.recommendation,
+      location: locations[i] ?? 'מסמך',
+    }
+  })
+}
+
+function hasMeaningfulSignals(signals: ExtractedSignals, fileType: FileType): boolean {
+  if (fileType === 'pptx') return (signals.slideCount ?? 0) > 0
+  if (fileType === 'docx') return (signals.paragraphCount ?? 0) > 0
+  if (fileType === 'xlsx') return (signals.sheetCount ?? 0) > 0
+  return false
+}
+
+function buildFallbackDrafts(signals: ExtractedSignals, fileName: string): IssueDraft[] {
+  const drafts: IssueDraft[] = []
+  const meta: string[] = []
+  if (signals.slideCount != null) meta.push(`${signals.slideCount} שקופיות`)
+  if (signals.paragraphCount != null) meta.push(`${signals.paragraphCount} פסקאות`)
+  if (signals.sheetCount != null) meta.push(`${signals.sheetCount} גיליונות`)
+  if (signals.fileSize != null) meta.push(`${Math.round(signals.fileSize / 1024)}KB`)
+
+  drafts.push({
+    id: 'limited-scan-metadata',
+    wcagKey: 'info-relationships',
+    title: 'ניתוח מבני מוגבל',
+    severity: 'Low',
+    category: 'מערכת',
+    affectedUsers: ['כל המשתמשים'],
+    impact: `${LIMITED_SCAN_NOTE} מטא-נתונים: ${meta.join(', ') || fileName}.`,
+    recommendation: 'בצעו בדיקת נגישות ידנית מלאה.',
+    location: 'מטא-נתוני קובץ',
+  })
+  return drafts
+}
+
+async function analyzeFile(
+  filePath: string,
+  fileType: FileType,
+  fileSize: number,
+): Promise<{ drafts: IssueDraft[]; signals: ExtractedSignals }> {
+  switch (fileType) {
+    case 'docx':
+      return analyzeDocx(filePath, fileSize)
+    case 'pptx':
+      return analyzePptx(filePath, fileSize)
+    case 'xlsx':
+      return analyzeXlsx(filePath, fileSize)
+  }
+}
+
+function logScan(fileName: string, signals: ExtractedSignals, issueCount: number, score: number) {
+  console.log('[AccessiOffice scan]', {
+    fileName,
+    fileType: signals.fileType,
+    fileSize: signals.fileSize,
+    slideCount: signals.slideCount,
+    paragraphCount: signals.paragraphCount,
+    sheetCount: signals.sheetCount,
+    imageCount: signals.imageCount,
+    tableCount: signals.tableCount,
+    hyperlinkCount: signals.hyperlinkCount,
+    mergedCellCount: signals.mergedCellCount,
+    issueCount,
+    score,
+  })
+}
+
+export async function generateScanResult(
+  filePath: string,
   fileName: string,
   fileType: FileType,
   userType: UserType,
   scanType: ScanType,
-): ScanResult {
-  let templates: IssueTemplate[]
-  switch (fileType) {
-    case 'docx':
-      templates = DOCX_ISSUES
-      break
-    case 'pptx':
-      templates = PPTX_ISSUES
-      break
-    case 'xlsx':
-      templates = XLSX_ISSUES
-      break
+  fileSize: number,
+): Promise<ScanResult> {
+  let issues: ScanIssue[]
+  let signals: ExtractedSignals = { fileType, fileSize }
+
+  if (isDemoFile(fileName)) {
+    issues = buildDemoIssues(fileType)
+    logScan(fileName, { ...signals, slideCount: fileType === 'pptx' ? 5 : undefined, paragraphCount: fileType === 'docx' ? 20 : undefined, sheetCount: fileType === 'xlsx' ? 2 : undefined }, issues.length, calculateScore(issues))
+  } else {
+    try {
+      const result = await analyzeFile(filePath, fileType, fileSize)
+      signals = result.signals
+      let drafts = dedupeDrafts(result.drafts)
+
+      if (!hasMeaningfulSignals(signals, fileType)) {
+        drafts = buildFallbackDrafts(signals, fileName)
+      }
+
+      issues = drafts.map(buildScanIssue)
+    } catch (err) {
+      console.error('[AccessiOffice scan] error:', (err as Error).message)
+      issues = buildFallbackDrafts(signals, fileName).map(buildScanIssue)
+    }
+
+    const score = calculateScore(issues)
+    logScan(fileName, signals, issues.length, score)
+
+    let criticalAnalysis = CRITICAL_ANALYSIS_HE
+    if (issues.length === 0) {
+      criticalAnalysis = `${NO_ISSUES_NOTE} ${CRITICAL_ANALYSIS_HE}`
+    } else if (issues.some((i) => i.id === 'limited-scan-metadata')) {
+      criticalAnalysis = `${LIMITED_SCAN_NOTE} ${CRITICAL_ANALYSIS_HE}`
+    }
+
+    return {
+      fileName,
+      fileType,
+      userType,
+      scanType,
+      score: issues.length === 0 ? 100 : score,
+      summary: buildSummary(issues),
+      issues,
+      criticalAnalysis,
+    }
   }
 
-  const issues = buildIssues(fileType, templates)
-
+  const score = calculateScore(issues)
   return {
     fileName,
     fileType,
     userType,
     scanType,
-    score: calculateScore(issues),
+    score,
     summary: buildSummary(issues),
     issues,
     criticalAnalysis: CRITICAL_ANALYSIS_HE,

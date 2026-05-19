@@ -98,7 +98,10 @@ export function normalizeScanResponse(api, clientFileName) {
   const summary = api.summary || { totalIssues: issues.length, high: 0, medium: 0, low: 0 }
 
   let summaryText
-  if (api.score >= 85) {
+  if (summary.totalIssues === 0) {
+    summaryText =
+      'לא נמצאו בעיות נגישות משמעותיות בסריקה האוטומטית. מומלץ לבצע בדיקה ידנית לפני פרסום.'
+  } else if (api.score >= 85) {
     summaryText = `קובץ ${fileLabel} עומד ברוב דרישות הנגישות, אך נמצאו ${summary.totalIssues} בעיות לטיפול.`
   } else if (api.score >= 65) {
     summaryText = `קובץ ${fileLabel} דורש שיפורים משמעותיים. נמצאו ${summary.totalIssues} בעיות.`
