@@ -1,17 +1,24 @@
 import type { WcagRuleKey } from '../data/wcag.rules.js'
 import { getWcagRule } from '../data/wcag.rules.js'
-import type { FileType, ScanIssue, ScanResult, ScanType, Severity, UserType } from '../types/scan.types.js'
-import { analyzeDocx } from './analyzers/docx.analyzer.js'
+import type {
+  Confidence,
+  FileType,
+  ScanIssue,
+  ScanResult,
+  ScanType,
+  Severity,
+  UserType,
+} from '../types/scan.types.js'
 import {
-  buildScanIssue,
-  buildSummary,
-  calculateScore,
-  dedupeDrafts,
-  type ExtractedSignals,
-  type IssueDraft,
-} from './analyzers/issue.builder.js'
-import { analyzePptx } from './analyzers/pptx.analyzer.js'
-import { analyzeXlsx } from './analyzers/xlsx.analyzer.js'
+  CAT_COLOR_CONTRAST,
+  CAT_DOCUMENT_STRUCTURE,
+  CAT_MEDIA,
+  CAT_TABLES,
+  OFFICE_TITLES,
+} from './officeCategories.js'
+import { calculateScore, logScanSummary, scanOfficeFile } from './officeScanner.service.js'
+import { PPTX_SCANNER_BUILD } from './pptxScanner.service.js'
+import { buildScanIssue, buildSummary, type ExtractedSignals, type IssueDraft } from './scannerShared.js'
 
 interface IssueTemplate {
   id: string
@@ -22,6 +29,7 @@ interface IssueTemplate {
   affectedUsers: string[]
   impact: string
   recommendation: string
+  confidence: Confidence
 }
 
 const DEMO_LOCATIONS: Record<FileType, string[]> = {
@@ -31,27 +39,27 @@ const DEMO_LOCATIONS: Record<FileType, string[]> = {
 }
 
 const DEMO_DOCX: IssueTemplate[] = [
-  { id: 'missing-alt-text', wcagKey: 'non-text-content', title: 'תמונה ללא טקסט חלופי', severity: 'High', category: 'תוכן', affectedUsers: ['משתמשים עיוורים', 'משתמשי קורא מסך'], impact: 'תמונות ללא תיאור חלופי.', recommendation: 'הוסיפו טקסט חלופי.', },
-  { id: 'incorrect-heading-structure', wcagKey: 'headings-labels', title: 'מבנה כותרות לא תקין', severity: 'High', category: 'מבנה', affectedUsers: ['משתמשי קורא מסך'], impact: 'מבנה כותרות לקוי.', recommendation: 'השתמשו בסגנונות כותרת.', },
-  { id: 'unclear-link-text', wcagKey: 'link-purpose', title: 'קישור לא ברור', severity: 'Medium', category: 'ניווט', affectedUsers: ['משתמשי קורא מסך'], impact: 'קישור "לחץ כאן".', recommendation: 'טקסט קישור תיאורי.', },
-  { id: 'table-without-header', wcagKey: 'info-relationships', title: 'טבלה ללא כותרות ברורות', severity: 'Medium', category: 'טבלאות', affectedUsers: ['משתמשי קורא מסך'], impact: 'טבלה ללא כותרת.', recommendation: 'סמנו שורת כותרת.', },
-  { id: 'low-color-contrast', wcagKey: 'contrast-minimum', title: 'ניגודיות צבעים נמוכה', severity: 'High', category: 'תצוגה', affectedUsers: ['משתמשים עם לקות ראייה'], impact: 'ניגודיות נמוכה.', recommendation: 'שפרו ניגודיות.', },
+  { id: 'missing-alt-text', wcagKey: 'non-text-content', title: OFFICE_TITLES.missingAltText, severity: 'High', category: CAT_MEDIA, affectedUsers: ['משתמשים עיוורים', 'משתמשי קורא מסך'], impact: 'תמונות ללא תיאור חלופי.', recommendation: 'הוסיפו טקסט חלופי.', confidence: 'High' },
+  { id: 'incorrect-heading-structure', wcagKey: 'headings-labels', title: OFFICE_TITLES.noHeadingsInDocument, severity: 'High', category: CAT_DOCUMENT_STRUCTURE, affectedUsers: ['משתמשי קורא מסך'], impact: 'מבנה כותרות לקוי.', recommendation: 'השתמשו בסגנונות כותרת.', confidence: 'Medium' },
+  { id: 'unclear-link-text', wcagKey: 'link-purpose', title: OFFICE_TITLES.unclearHyperlink, severity: 'Medium', category: CAT_DOCUMENT_STRUCTURE, affectedUsers: ['משתמשי קורא מסך'], impact: 'קישור "לחץ כאן".', recommendation: 'טקסט קישור תיאורי.', confidence: 'High' },
+  { id: 'table-without-header', wcagKey: 'info-relationships', title: OFFICE_TITLES.missingTableHeader, severity: 'Medium', category: CAT_TABLES, affectedUsers: ['משתמשי קורא מסך'], impact: 'טבלה ללא כותרת.', recommendation: 'סמנו שורת כותרת.', confidence: 'High' },
+  { id: 'low-color-contrast', wcagKey: 'contrast-minimum', title: OFFICE_TITLES.hardTextContrast, severity: 'High', category: CAT_COLOR_CONTRAST, affectedUsers: ['משתמשים עם לקות ראייה'], impact: 'ניגודיות נמוכה.', recommendation: 'שפרו ניגודיות.', confidence: 'Low' },
 ]
 
 const DEMO_PPTX: IssueTemplate[] = [
-  { id: 'slide-without-title', wcagKey: 'page-titled-headings', title: 'שקופית ללא כותרת', severity: 'Medium', category: 'מבנה', affectedUsers: ['משתמשי קורא מסך'], impact: 'שקופיות ללא כותרת.', recommendation: 'הוסיפו כותרת.', },
-  { id: 'image-without-alt-text', wcagKey: 'non-text-content', title: 'תמונה ללא טקסט חלופי', severity: 'High', category: 'תוכן', affectedUsers: ['משתמשים עיוורים'], impact: 'תמונות ללא alt.', recommendation: 'הוסיפו alt.', },
-  { id: 'reading-order-issue', wcagKey: 'meaningful-sequence', title: 'בעיית סדר קריאה', severity: 'Medium', category: 'מבנה', affectedUsers: ['משתמשי קורא מסך'], impact: 'סדר קריאה.', recommendation: 'בדקו סדר קריאה.', },
-  { id: 'unclear-link', wcagKey: 'link-purpose', title: 'קישור לא ברור', severity: 'Medium', category: 'ניווט', affectedUsers: ['משתמשי קורא מסך'], impact: 'קישור לא ברור.', recommendation: 'טקסט תיאורי.', },
-  { id: 'small-font-size', wcagKey: 'resize-text', title: 'גודל גופן קטן מדי', severity: 'Low', category: 'תצוגה', affectedUsers: ['משתמשים עם לקות ראייה'], impact: 'גופן קטן.', recommendation: 'הגדילו גופן.', },
+  { id: 'slide-without-title', wcagKey: 'page-titled-headings', title: OFFICE_TITLES.slideWithoutTitle, severity: 'Medium', category: CAT_DOCUMENT_STRUCTURE, affectedUsers: ['משתמשי קורא מסך'], impact: 'שקופיות ללא כותרת.', recommendation: 'הוסיפו כותרת.', confidence: 'High' },
+  { id: 'image-without-alt-text', wcagKey: 'non-text-content', title: OFFICE_TITLES.missingAltText, severity: 'High', category: CAT_MEDIA, affectedUsers: ['משתמשים עיוורים'], impact: 'תמונות ללא alt.', recommendation: 'הוסיפו alt.', confidence: 'High' },
+  { id: 'reading-order-issue', wcagKey: 'meaningful-sequence', title: OFFICE_TITLES.readingOrderCheck, severity: 'Medium', category: CAT_DOCUMENT_STRUCTURE, affectedUsers: ['משתמשי קורא מסך'], impact: 'סדר קריאה.', recommendation: 'בדקו סדר קריאה.', confidence: 'Medium' },
+  { id: 'unclear-link', wcagKey: 'link-purpose', title: OFFICE_TITLES.unclearHyperlink, severity: 'Medium', category: CAT_DOCUMENT_STRUCTURE, affectedUsers: ['משתמשי קורא מסך'], impact: 'קישור לא ברור.', recommendation: 'טקסט תיאורי.', confidence: 'High' },
+  { id: 'small-font-size', wcagKey: 'resize-text', title: OFFICE_TITLES.smallFont, severity: 'Low', category: CAT_COLOR_CONTRAST, affectedUsers: ['משתמשים עם לקות ראייה'], impact: 'גופן קטן.', recommendation: 'הגדילו גופן.', confidence: 'High' },
 ]
 
 const DEMO_XLSX: IssueTemplate[] = [
-  { id: 'table-without-header', wcagKey: 'info-relationships', title: 'טבלה ללא שורת כותרות', severity: 'High', category: 'טבלאות', affectedUsers: ['משתמשי קורא מסך'], impact: 'ללא כותרת.', recommendation: 'הגדירו כותרת.', },
-  { id: 'merged-cells', wcagKey: 'info-relationships', title: 'תאים ממוזגים המשמשים לעיצוב', severity: 'High', category: 'טבלאות', affectedUsers: ['משתמשי קורא מסך'], impact: 'מיזוג תאים.', recommendation: 'בטלו מיזוג.', },
-  { id: 'empty-cells', wcagKey: 'info-relationships', title: 'תאים ריקים המשמשים לריווח חזותי', severity: 'Medium', category: 'מבנה', affectedUsers: ['משתמשי קורא מסך'], impact: 'תאים ריקים.', recommendation: 'צמצמו ריווח.', },
-  { id: 'sheet-without-title', wcagKey: 'headings-labels', title: 'שם גיליון לא תיאורי', severity: 'Medium', category: 'מבנה', affectedUsers: ['משתמשי קורא מסך'], impact: 'Sheet1.', recommendation: 'שם תיאורי.', },
-  { id: 'low-contrast', wcagKey: 'contrast-minimum', title: 'ניגודיות צבעים נמוכה', severity: 'High', category: 'תצוגה', affectedUsers: ['משתמשים עם לקות ראייה'], impact: 'ניגודיות.', recommendation: 'שפרו צבעים.', },
+  { id: 'table-without-header', wcagKey: 'info-relationships', title: OFFICE_TITLES.missingTableHeader, severity: 'High', category: CAT_TABLES, affectedUsers: ['משתמשי קורא מסך'], impact: 'ללא כותרת.', recommendation: 'הגדירו כותרת.', confidence: 'High' },
+  { id: 'merged-cells', wcagKey: 'info-relationships', title: OFFICE_TITLES.mergedOrSplitCells, severity: 'High', category: CAT_TABLES, affectedUsers: ['משתמשי קורא מסך'], impact: 'מיזוג תאים.', recommendation: 'בטלו מיזוג.', confidence: 'High' },
+  { id: 'empty-cells', wcagKey: 'info-relationships', title: OFFICE_TITLES.emptyCellsInRange, severity: 'Medium', category: CAT_TABLES, affectedUsers: ['משתמשי קורא מסך'], impact: 'תאים ריקים.', recommendation: 'צמצמו ריווח.', confidence: 'High' },
+  { id: 'sheet-without-title', wcagKey: 'headings-labels', title: OFFICE_TITLES.genericSheetName, severity: 'Medium', category: CAT_DOCUMENT_STRUCTURE, affectedUsers: ['משתמשי קורא מסך'], impact: 'Sheet1.', recommendation: 'שם תיאורי.', confidence: 'High' },
+  { id: 'low-contrast', wcagKey: 'contrast-minimum', title: OFFICE_TITLES.hardTextContrast, severity: 'High', category: CAT_COLOR_CONTRAST, affectedUsers: ['משתמשים עם לקות ראייה'], impact: 'ניגודיות.', recommendation: 'שפרו צבעים.', confidence: 'Low' },
 ]
 
 export const CRITICAL_ANALYSIS_HE =
@@ -65,7 +73,11 @@ const NO_ISSUES_NOTE =
 
 function isDemoFile(fileName: string): boolean {
   const lower = fileName.toLowerCase()
-  return lower.includes('demo') || lower.includes('sample-bad') || lower.includes('bad-accessibility')
+  return (
+    lower.includes('sample-bad') ||
+    lower.includes('bad-accessibility') ||
+    /(?:^|[/\\._-])demo(?:[/\\._-]|\.)/i.test(lower)
+  )
 }
 
 function buildDemoIssues(fileType: FileType): ScanIssue[] {
@@ -86,6 +98,7 @@ function buildDemoIssues(fileType: FileType): ScanIssue[] {
       impact: t.impact,
       recommendation: t.recommendation,
       location: locations[i] ?? 'מסמך',
+      confidence: t.confidence,
     }
   })
 }
@@ -98,57 +111,26 @@ function hasMeaningfulSignals(signals: ExtractedSignals, fileType: FileType): bo
 }
 
 function buildFallbackDrafts(signals: ExtractedSignals, fileName: string): IssueDraft[] {
-  const drafts: IssueDraft[] = []
   const meta: string[] = []
   if (signals.slideCount != null) meta.push(`${signals.slideCount} שקופיות`)
   if (signals.paragraphCount != null) meta.push(`${signals.paragraphCount} פסקאות`)
   if (signals.sheetCount != null) meta.push(`${signals.sheetCount} גיליונות`)
   if (signals.fileSize != null) meta.push(`${Math.round(signals.fileSize / 1024)}KB`)
 
-  drafts.push({
-    id: 'limited-scan-metadata',
-    wcagKey: 'info-relationships',
-    title: 'ניתוח מבני מוגבל',
-    severity: 'Low',
-    category: 'מערכת',
-    affectedUsers: ['כל המשתמשים'],
-    impact: `${LIMITED_SCAN_NOTE} מטא-נתונים: ${meta.join(', ') || fileName}.`,
-    recommendation: 'בצעו בדיקת נגישות ידנית מלאה.',
-    location: 'מטא-נתוני קובץ',
-  })
-  return drafts
-}
-
-async function analyzeFile(
-  filePath: string,
-  fileType: FileType,
-  fileSize: number,
-): Promise<{ drafts: IssueDraft[]; signals: ExtractedSignals }> {
-  switch (fileType) {
-    case 'docx':
-      return analyzeDocx(filePath, fileSize)
-    case 'pptx':
-      return analyzePptx(filePath, fileSize)
-    case 'xlsx':
-      return analyzeXlsx(filePath, fileSize)
-  }
-}
-
-function logScan(fileName: string, signals: ExtractedSignals, issueCount: number, score: number) {
-  console.log('[AccessiOffice scan]', {
-    fileName,
-    fileType: signals.fileType,
-    fileSize: signals.fileSize,
-    slideCount: signals.slideCount,
-    paragraphCount: signals.paragraphCount,
-    sheetCount: signals.sheetCount,
-    imageCount: signals.imageCount,
-    tableCount: signals.tableCount,
-    hyperlinkCount: signals.hyperlinkCount,
-    mergedCellCount: signals.mergedCellCount,
-    issueCount,
-    score,
-  })
+  return [
+    {
+      id: 'limited-scan-metadata',
+      wcagKey: 'info-relationships',
+      title: OFFICE_TITLES.limitedScan,
+      severity: 'Low',
+      category: 'מערכת',
+      affectedUsers: ['כל המשתמשים'],
+      impact: `${LIMITED_SCAN_NOTE} מטא-נתונים: ${meta.join(', ') || fileName}.`,
+      recommendation: 'בצעו בדיקת נגישות ידנית מלאה.',
+      location: 'מטא-נתוני קובץ',
+      confidence: 'Low',
+    },
+  ]
 }
 
 export async function generateScanResult(
@@ -158,52 +140,67 @@ export async function generateScanResult(
   userType: UserType,
   scanType: ScanType,
   fileSize: number,
+  debug?: { scanId: string; debugFileHash: string },
 ): Promise<ScanResult> {
-  let issues: ScanIssue[]
-  let signals: ExtractedSignals = { fileType, fileSize }
+  const scanMeta = {
+    scanId: debug?.scanId ?? String(Date.now()),
+    debugFileHash: debug?.debugFileHash ?? '',
+    scannerVersion: fileType === 'pptx' ? PPTX_SCANNER_BUILD : undefined,
+  }
 
   if (isDemoFile(fileName)) {
-    issues = buildDemoIssues(fileType)
-    logScan(fileName, { ...signals, slideCount: fileType === 'pptx' ? 5 : undefined, paragraphCount: fileType === 'docx' ? 20 : undefined, sheetCount: fileType === 'xlsx' ? 2 : undefined }, issues.length, calculateScore(issues))
-  } else {
-    try {
-      const result = await analyzeFile(filePath, fileType, fileSize)
-      signals = result.signals
-      let drafts = dedupeDrafts(result.drafts)
-
-      if (!hasMeaningfulSignals(signals, fileType)) {
-        drafts = buildFallbackDrafts(signals, fileName)
-      }
-
-      issues = drafts.map(buildScanIssue)
-    } catch (err) {
-      console.error('[AccessiOffice scan] error:', (err as Error).message)
-      issues = buildFallbackDrafts(signals, fileName).map(buildScanIssue)
-    }
-
+    console.warn('[SCAN SERVICE] DEMO file path — static issues, NOT real scanner', { fileName })
+    const issues = buildDemoIssues(fileType)
     const score = calculateScore(issues)
-    logScan(fileName, signals, issues.length, score)
-
-    let criticalAnalysis = CRITICAL_ANALYSIS_HE
-    if (issues.length === 0) {
-      criticalAnalysis = `${NO_ISSUES_NOTE} ${CRITICAL_ANALYSIS_HE}`
-    } else if (issues.some((i) => i.id === 'limited-scan-metadata')) {
-      criticalAnalysis = `${LIMITED_SCAN_NOTE} ${CRITICAL_ANALYSIS_HE}`
-    }
-
+    logScanSummary(fileName, { fileType, fileSize }, issues.length, score)
     return {
       fileName,
       fileType,
       userType,
       scanType,
-      score: issues.length === 0 ? 100 : score,
+      score,
       summary: buildSummary(issues),
       issues,
-      criticalAnalysis,
+      criticalAnalysis: CRITICAL_ANALYSIS_HE,
+      ...scanMeta,
     }
   }
 
-  const score = calculateScore(issues)
+  let issues: ScanIssue[]
+  let signals: ExtractedSignals = { fileType, fileSize }
+
+  try {
+    if (fileType === 'pptx') {
+      console.log('[SCAN SERVICE] Calling PPTX scanner', {
+        version: PPTX_SCANNER_BUILD,
+        filePath,
+        fileSize,
+        scanId: scanMeta.scanId,
+      })
+    }
+    const result = await scanOfficeFile(filePath, fileType, fileSize)
+    signals = result.signals
+
+    if (!hasMeaningfulSignals(signals, fileType)) {
+      issues = buildFallbackDrafts(signals, fileName).map(buildScanIssue)
+    } else {
+      issues = result.issues
+    }
+  } catch (err) {
+    console.error('[AccessiOffice scan] error:', (err as Error).message)
+    issues = buildFallbackDrafts(signals, fileName).map(buildScanIssue)
+  }
+
+  const score = issues.length === 0 ? 100 : calculateScore(issues)
+  logScanSummary(fileName, signals, issues.length, score)
+
+  let criticalAnalysis = CRITICAL_ANALYSIS_HE
+  if (issues.length === 0) {
+    criticalAnalysis = `${NO_ISSUES_NOTE} ${CRITICAL_ANALYSIS_HE}`
+  } else if (issues.some((i) => i.id === 'limited-scan-metadata')) {
+    criticalAnalysis = `${LIMITED_SCAN_NOTE} ${CRITICAL_ANALYSIS_HE}`
+  }
+
   return {
     fileName,
     fileType,
@@ -212,7 +209,8 @@ export async function generateScanResult(
     score,
     summary: buildSummary(issues),
     issues,
-    criticalAnalysis: CRITICAL_ANALYSIS_HE,
+    criticalAnalysis,
+    ...scanMeta,
   }
 }
 

@@ -2,6 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import multer from 'multer'
 import path from 'path'
 import fs from 'fs'
+import crypto from 'crypto'
 import { fileURLToPath } from 'url'
 import {
   generateScanResult,
@@ -80,6 +81,21 @@ router.post('/scan', upload.single('file'), async (req, res) => {
   )
   try {
     const fileSize = fs.statSync(uploaded.path).size
+    const fileBuffer = fs.readFileSync(uploaded.path)
+    const debugFileHash = crypto.createHash('sha1').update(fileBuffer).digest('hex')
+    const scanId = String(Date.now())
+    const ext = path.extname(uploaded.originalname).toLowerCase()
+
+    console.log('[SCAN REQUEST]', {
+      originalFilename: uploaded.originalname,
+      displayFileName: displayName,
+      savedPath: uploaded.path,
+      fileSize,
+      extension: ext,
+      timestamp: scanId,
+      debugFileHash,
+    })
+
     const result = await generateScanResult(
       uploaded.path,
       displayName,
@@ -87,6 +103,7 @@ router.post('/scan', upload.single('file'), async (req, res) => {
       userType,
       scanType,
       fileSize,
+      { scanId, debugFileHash },
     )
     cleanup(uploaded.path)
     res.json(result)

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import Button from '../components/Button.jsx'
 import ScoreRing from '../components/ScoreRing.jsx'
 import IssuesTable from '../components/IssuesTable.jsx'
+import AccessibilityAssistantPanel from '../components/AccessibilityAssistantPanel.jsx'
 import { useScan } from '../context/ScanContext.jsx'
 
 const USER_LABELS = {
@@ -26,10 +27,16 @@ export default function ResultsPage() {
   const results = scanData?.results
 
   useEffect(() => {
-    if (!results) navigate('/upload')
+    if (!results) {
+      navigate('/upload')
+      return
+    }
+    if (!results.scanId) {
+      navigate('/upload')
+    }
   }, [results, navigate])
 
-  if (!results) return null
+  if (!results || !results.scanId) return null
 
   const {
     score,
@@ -47,6 +54,13 @@ export default function ResultsPage() {
     <div className="page page-results">
       <header className="page-header">
         <h1>תוצאות סריקת נגישות</h1>
+        {results.scanId && (
+          <p className="scan-debug-meta" dir="ltr">
+            Debug scan id: {results.scanId}
+            {results.scannerVersion ? ` · ${results.scannerVersion}` : ''}
+            {results.debugFileHash ? ` · hash ${results.debugFileHash.slice(0, 12)}…` : ''}
+          </p>
+        )}
         <dl className="meta-chips">
           <div><dt>קובץ</dt><dd className="file-name-display">{fileName}</dd></div>
           <div><dt>סוג</dt><dd>{FILE_LABELS[fileType]}</dd></div>
@@ -83,6 +97,8 @@ export default function ResultsPage() {
         <h2 className="summary-banner__title">סיכום</h2>
         <p>{totalIssues === 0 ? NO_ISSUES_MSG : summary || SUMMARY_DEFAULT}</p>
       </article>
+
+      <AccessibilityAssistantPanel issues={issues} fileType={fileType} />
 
       <section className="card">
         <h2 className="card-title">פירוט בעיות נגישות ({totalIssues})</h2>

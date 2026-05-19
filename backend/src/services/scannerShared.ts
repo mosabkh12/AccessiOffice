@@ -1,6 +1,5 @@
-import type { WcagRuleKey } from '../../data/wcag.rules.js'
-import { getWcagRule } from '../../data/wcag.rules.js'
-import type { ScanIssue, Severity } from '../../types/scan.types.js'
+import { getWcagRule, type WcagRuleKey } from './wcagRules.js'
+import type { Confidence, ScanIssue, Severity } from '../types/scan.types.js'
 
 export interface IssueDraft {
   id: string
@@ -12,6 +11,7 @@ export interface IssueDraft {
   impact: string
   recommendation: string
   location: string
+  confidence: Confidence
 }
 
 export interface ExtractedSignals {
@@ -27,6 +27,12 @@ export interface ExtractedSignals {
   genericSheetNames?: string[]
   missingTitleSlides?: number[]
   emptyParagraphCount?: number
+  titleCount?: number
+  duplicateTitleSlides?: number[]
+  imageLikeObjectCount?: number
+  missingAltCount?: number
+  decorativeCandidateCount?: number
+  readingOrderRiskSlides?: number[]
 }
 
 export function buildScanIssue(draft: IssueDraft): ScanIssue {
@@ -44,6 +50,7 @@ export function buildScanIssue(draft: IssueDraft): ScanIssue {
     impact: draft.impact,
     recommendation: draft.recommendation,
     location: draft.location,
+    confidence: draft.confidence,
   }
 }
 

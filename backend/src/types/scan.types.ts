@@ -1,5 +1,6 @@
 export type FileType = 'docx' | 'pptx' | 'xlsx'
 export type Severity = 'High' | 'Medium' | 'Low'
+export type Confidence = 'High' | 'Medium' | 'Low'
 export type UserType = 'document-author' | 'accessibility-auditor' | 'lecturer-institution'
 export type ScanType = 'basic' | 'full'
 
@@ -16,6 +17,7 @@ export interface ScanIssue {
   impact: string
   recommendation: string
   location: string
+  confidence: Confidence
 }
 
 export interface ScanSummary {
@@ -34,4 +36,10 @@ export interface ScanResult {
   summary: ScanSummary
   issues: ScanIssue[]
   criticalAnalysis: string
+  /** Debug: unique id per scan request */
+  scanId?: string
+  /** Debug: SHA-1 of uploaded file bytes */
+  debugFileHash?: string
+  /** Debug: active PPTX scanner build label */
+  scannerVersion?: string
 }

@@ -52,7 +52,28 @@ export async function submitScan({ file, userType, scanType }) {
     throw new Error(data.error || 'הסריקה נכשלה. ודאו שהשרת פועל ונסו שוב.')
   }
 
-  return normalizeScanResponse(data, file.name)
+  const normalized = normalizeScanResponse(data, file.name)
+
+  console.log('[FRONTEND RECEIVED SCAN RESPONSE]', {
+    scanId: data.scanId,
+    debugFileHash: data.debugFileHash,
+    scannerVersion: data.scannerVersion,
+    fileName: normalized.fileName,
+    totalIssues: normalized.totalIssues,
+    issueTitles: [...new Set(normalized.issues.map((i) => i.title))],
+    locations: normalized.issues.map((i) => i.location),
+  })
+
+  return normalized
+}
+
+function extractContextSnippet(impact, location) {
+  const fromImpact =
+    impact?.match(/טקסט סמוך:\s*"([^"]+)"/)?.[1] ||
+    impact?.match(/הקשר:\s*"([^"]+)"/)?.[1] ||
+    impact?.match(/טקסט:\s*"([^"]+)"/)?.[1]
+  if (fromImpact) return fromImpact
+  return location?.match(/ליד:\s*"([^"]+)"/)?.[1] || null
 }
 
 function normalizeIssue(raw) {
@@ -69,11 +90,20 @@ function normalizeIssue(raw) {
   const wcagLevel = raw?.wcagLevel || '—'
   const wcagPrinciple = raw?.wcagPrinciple || '—'
 
+  const confidenceKey = String(raw?.confidence || 'Medium').toLowerCase()
+  const confidenceLabels = {
+    high: 'ודאות גבוהה',
+    medium: 'ודאות בינונית',
+    low: 'ודאות נמוכה',
+  }
+
   return {
     id: raw?.id || `issue-${Math.random().toString(36).slice(2, 9)}`,
     title: raw?.title || 'בעיית נגישות לא מזוהה',
     severity: severityKey,
     severityLabel: severityKey === 'high' ? 'גבוהה' : severityKey === 'medium' ? 'בינונית' : 'נמוכה',
+    confidence: confidenceKey,
+    confidenceLabel: confidenceLabels[confidenceKey] || confidenceLabels.medium,
     category: raw?.category || 'כללי',
     wcagCriterion,
     wcagPrinciple,
@@ -85,6 +115,7 @@ function normalizeIssue(raw) {
     impact: raw?.impact || 'לא צוינה השפעה.',
     recommendation: raw?.recommendation || 'לא צוינה המלצה.',
     location: raw?.location || '—',
+    contextSnippet: extractContextSnippet(raw?.impact, raw?.location),
   }
 }
 
@@ -114,6 +145,9 @@ export function normalizeScanResponse(api, clientFileName) {
     'סריקה אוטומטית מסייעת לזהות בעיות נפוצות, אך אינה מחליפה בדיקה אנושית מקצועית.'
 
   return {
+    scanId: api.scanId ?? null,
+    debugFileHash: api.debugFileHash ?? null,
+    scannerVersion: api.scannerVersion ?? null,
     fileName,
     fileType,
     userType,

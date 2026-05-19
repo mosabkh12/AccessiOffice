@@ -12,9 +12,29 @@ export const UNCLEAR_LINK_PATTERNS = [
   /לחץ כאן/i,
   /^כאן$/i,
   /^here$/i,
+  /^more$/i,
   /click here/i,
   /read more/i,
   /more info/i,
+]
+
+const GENERIC_ALT_PATTERNS = [
+  /^picture\s*\d*$/i,
+  /^image\s*\d*$/i,
+  /^graphic\s*\d*$/i,
+  /^graphics\s*\d*$/i,
+  /^תמונה\s*\d*$/i,
+  /^אובייקט\s*\d*$/i,
+  /^photo\s*\d*$/i,
+  /^object\s*\d*$/i,
+  /^rectangle\s*\d*$/i,
+  /^shape\s*\d*$/i,
+  /^צורה\s*\d*$/i,
+  /^oval\s*\d*$/i,
+  /^group\s*\d*$/i,
+  /^picture$/i,
+  /^image$/i,
+  /^graphic$/i,
 ]
 
 export function readZip(filePath: string): AdmZip {
@@ -61,6 +81,35 @@ export function isUnclearLink(text: string): boolean {
   return UNCLEAR_LINK_PATTERNS.some((p) => p.test(t))
 }
 
+export function isGenericAltText(value?: string): boolean {
+  const v = (value ?? '').trim()
+  if (!v) return true
+  return GENERIC_ALT_PATTERNS.some((p) => p.test(v))
+}
+
+export function isDecorativeAltValue(value?: string): boolean {
+  const v = (value ?? '').trim().toLowerCase()
+  return v === 'decorative' || v === 'דקורטיבי' || v === 'קישוט'
+}
+
+/** True when descr/title are missing or generic. Name alone is NOT meaningful alt (Office rule). */
+export function isMissingAltText(descr?: string, title?: string, _name?: string): boolean {
+  const d = (descr ?? '').trim()
+  const t = (title ?? '').trim()
+  if (isDecorativeAltValue(d) || isDecorativeAltValue(t)) return false
+  if (d.length >= 2 && !isGenericAltText(d)) return false
+  if (t.length >= 2 && !isGenericAltText(t)) return false
+  return true
+}
+
+export function attrFromTag(tag: string, name: string): string | undefined {
+  return tag.match(new RegExp(`${name}="([^"]*)"`, 'i'))?.[1]
+}
+
+export function wordCount(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length
+}
+
 export function parseSrgbHex(color?: string): { r: number; g: number; b: number } | null {
   if (!color) return null
   const hex = color.replace(/^#/, '').trim()
@@ -93,4 +142,9 @@ export function contrastRatio(fg: string, bg: string): number | null {
 
 export function isGenericSheetName(name: string): boolean {
   return /^(sheet\d+|גיליון\d*|גליון\d*)$/i.test(name.trim())
+}
+
+/** PowerPoint sz is in hundredths of a point (1800 = 18pt). */
+export function ptFromSz(sz: number): number {
+  return sz / 100
 }

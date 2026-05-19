@@ -77,6 +77,7 @@ export default function UploadPage() {
       fileType: getFileType(file.name),
       userType,
       scanType,
+      results: null,
     })
     navigate('/scan')
   }
