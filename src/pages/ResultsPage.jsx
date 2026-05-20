@@ -41,6 +41,8 @@ export default function ResultsPage() {
   const {
     score,
     totalIssues,
+    mainIssueTotal,
+    quickFixTotal,
     severityCounts,
     issues,
     fileName,
@@ -76,9 +78,15 @@ export default function ResultsPage() {
           <p className="stat-sublabel">מתוך 100</p>
         </article>
         <article className="card stat-card">
-          <p className="stat-value">{totalIssues}</p>
-          <p className="stat-label">סה&quot;כ בעיות</p>
+          <p className="stat-value">{mainIssueTotal ?? totalIssues}</p>
+          <p className="stat-label">בעיות נגישות</p>
         </article>
+        {(quickFixTotal ?? 0) > 0 && (
+          <article className="card stat-card stat-card--quickfix">
+            <p className="stat-value">{quickFixTotal}</p>
+            <p className="stat-label">הצעות Quick Fix</p>
+          </article>
+        )}
         <article className="card stat-card stat-card--high">
           <p className="stat-value">{severityCounts.high}</p>
           <p className="stat-label">חומרה גבוהה</p>
@@ -98,11 +106,17 @@ export default function ResultsPage() {
         <p>{totalIssues === 0 ? NO_ISSUES_MSG : summary || SUMMARY_DEFAULT}</p>
       </article>
 
-      <AccessibilityAssistantPanel issues={issues} fileType={fileType} />
+      <AccessibilityAssistantPanel
+        issues={issues}
+        fileType={fileType}
+        quickFixTotal={quickFixTotal}
+      />
 
       <section className="card">
-        <h2 className="card-title">פירוט בעיות נגישות ({totalIssues})</h2>
-        {totalIssues === 0 ? (
+        <h2 className="card-title">
+          פירוט ממצאים ({(mainIssueTotal ?? totalIssues) + (quickFixTotal ?? 0)})
+        </h2>
+        {(mainIssueTotal ?? totalIssues) === 0 && (quickFixTotal ?? 0) === 0 ? (
           <p className="card-hint">{NO_ISSUES_MSG}</p>
         ) : (
           <>

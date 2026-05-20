@@ -1068,6 +1068,27 @@ h3 { font-size: 1.15rem; }
   .stat-card--score { grid-column: 1 / -1; }
 }
 
+.stat-card--quickfix .stat-value {
+  color: var(--accent-teal, #0d9488);
+}
+
+.assistant-check--quickfix .assistant-check__status {
+  background: var(--accent-teal, #0d9488);
+  color: #fff;
+}
+
+.issues-section-heading {
+  font-size: 1.05rem;
+  margin: 1.25rem 0 0.5rem;
+  color: var(--navy-mid, #1e3a5f);
+}
+
+.issue-tier-section--quickfix {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-subtle, #e2e8f0);
+}
+
 /* —— Print —— */
 @media print {
   .layout-header,

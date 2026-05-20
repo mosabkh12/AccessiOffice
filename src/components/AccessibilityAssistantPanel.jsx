@@ -4,9 +4,12 @@ import { buildAssistantChecklist } from '../data/powerpointAssistantChecks.js'
 function CheckRow({ check }) {
   const [open, setOpen] = useState(false)
   const hasFailures = !check.passed
+  const isQuickFix = check.isQuickFix
 
   return (
-    <li className={`assistant-check ${check.passed ? 'assistant-check--pass' : 'assistant-check--fail'}`}>
+    <li
+      className={`assistant-check ${check.passed ? 'assistant-check--pass' : isQuickFix ? 'assistant-check--quickfix' : 'assistant-check--fail'}`}
+    >
       <button
         type="button"
         className="assistant-check__btn"
@@ -33,10 +36,10 @@ function CheckRow({ check }) {
   )
 }
 
-export default function AccessibilityAssistantPanel({ issues, fileType }) {
+export default function AccessibilityAssistantPanel({ issues, fileType, quickFixTotal }) {
   if (fileType !== 'pptx') return null
 
-  const groups = buildAssistantChecklist(issues)
+  const groups = buildAssistantChecklist(issues, { quickFixTotal })
 
   return (
     <section className="card assistant-panel" aria-label="מסייע נגישות PowerPoint">

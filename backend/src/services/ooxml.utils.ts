@@ -32,9 +32,16 @@ const GENERIC_ALT_PATTERNS = [
   /^צורה\s*\d*$/i,
   /^oval\s*\d*$/i,
   /^group\s*\d*$/i,
+  /^freeform\s*\d*$/i,
+  /^autoshape\s*\d*$/i,
+  /^textbox\s*\d*$/i,
+  /^text box\s*\d*$/i,
+  /^chart\s*\d*$/i,
   /^picture$/i,
   /^image$/i,
   /^graphic$/i,
+  /^freeform$/i,
+  /^autoshape$/i,
 ]
 
 export function readZip(filePath: string): AdmZip {

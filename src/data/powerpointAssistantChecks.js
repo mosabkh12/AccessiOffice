@@ -8,7 +8,6 @@ export const PPTX_ASSISTANT_GROUPS = [
     category: 'מדיה ואיורים',
     checks: [
       { title: 'חסר טקסט חלופי' },
-      { title: 'אובייקטים שניתן לסמן כדקורטיביים' },
       { title: 'חסרות כתוביות לאודיו/וידאו' },
     ],
   },
@@ -49,14 +48,23 @@ function findIssuesForCheck(byTitle, check) {
   return matches
 }
 
-export function buildAssistantChecklist(issues) {
+const QUICK_FIX_DECORATIVE = 'אובייקטים שניתן לסמן כדקורטיביים'
+
+export function buildAssistantChecklist(issues, { quickFixTotal } = {}) {
+  const blocking = (issues ?? []).filter(
+    (i) => i.issueTier !== 'quickFix' && i.title !== QUICK_FIX_DECORATIVE,
+  )
+  const quickFix = (issues ?? []).filter(
+    (i) => i.issueTier === 'quickFix' || i.title === QUICK_FIX_DECORATIVE,
+  )
   const byTitle = new Map()
-  for (const issue of issues ?? []) {
+  for (const issue of blocking) {
     if (!byTitle.has(issue.title)) byTitle.set(issue.title, [])
     byTitle.get(issue.title).push(issue)
   }
+  const decorativeCount = quickFixTotal ?? quickFix.length
 
-  return PPTX_ASSISTANT_GROUPS.map((group) => ({
+  const groups = PPTX_ASSISTANT_GROUPS.map((group) => ({
     category: group.category,
     checks: group.checks.map((check) => {
       const matches = findIssuesForCheck(byTitle, check)
@@ -65,9 +73,35 @@ export function buildAssistantChecklist(issues) {
         passed: matches.length === 0,
         count: matches.length,
         issues: matches,
+        isQuickFix: false,
       }
     }),
   }))
+
+  if (decorativeCount > 0) {
+    groups.unshift({
+      category: 'Quick Fix',
+      checks: [
+        {
+          title: `${decorativeCount} צורות ניתן לסמן כדקורטיביות`,
+          passed: false,
+          count: decorativeCount,
+          issues: quickFix,
+          isQuickFix: true,
+        },
+      ],
+    })
+  }
+
+  return groups
+}
+
+/** Checks with no blocking findings (Quick Fix decorative excluded). */
+export function buildPassedChecks(issues, { quickFixTotal } = {}) {
+  const groups = buildAssistantChecklist(issues, { quickFixTotal })
+  return groups.flatMap((g) =>
+    g.checks.filter((c) => c.passed && !c.isQuickFix).map((c) => ({ category: g.category, title: c.title })),
+  )
 }
 
 export function groupIssuesByTitle(issues) {

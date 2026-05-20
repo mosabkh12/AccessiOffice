@@ -97,8 +97,15 @@ function normalizeIssue(raw) {
     low: 'ודאות נמוכה',
   }
 
+  const issueTier =
+    raw?.issueTier === 'quickFix' ||
+    raw?.title === 'אובייקטים שניתן לסמן כדקורטיביים'
+      ? 'quickFix'
+      : 'blocking'
+
   return {
     id: raw?.id || `issue-${Math.random().toString(36).slice(2, 9)}`,
+    issueTier,
     title: raw?.title || 'בעיית נגישות לא מזוהה',
     severity: severityKey,
     severityLabel: severityKey === 'high' ? 'גבוהה' : severityKey === 'medium' ? 'בינונית' : 'נמוכה',
@@ -126,18 +133,22 @@ export function normalizeScanResponse(api, clientFileName) {
   const fileLabel = FILE_LABELS[fileType] ?? 'Office'
 
   const issues = (api.issues || []).map(normalizeIssue)
-  const summary = api.summary || { totalIssues: issues.length, high: 0, medium: 0, low: 0 }
+  const blockingIssues = issues.filter((i) => i.issueTier !== 'quickFix')
+  const quickFixIssues = issues.filter((i) => i.issueTier === 'quickFix')
+  const summary = api.summary || { totalIssues: blockingIssues.length, high: 0, medium: 0, low: 0 }
+  const mainIssueTotal = summary.mainIssueTotal ?? summary.totalIssues ?? blockingIssues.length
+  const quickFixTotal = summary.quickFixTotal ?? quickFixIssues.length
 
   let summaryText
-  if (summary.totalIssues === 0) {
+  if (mainIssueTotal === 0 && quickFixTotal === 0) {
     summaryText =
       'לא נמצאו בעיות נגישות משמעותיות בסריקה האוטומטית. מומלץ לבצע בדיקה ידנית לפני פרסום.'
   } else if (api.score >= 85) {
-    summaryText = `קובץ ${fileLabel} עומד ברוב דרישות הנגישות, אך נמצאו ${summary.totalIssues} בעיות לטיפול.`
+    summaryText = `קובץ ${fileLabel} עומד ברוב דרישות הנגישות, אך נמצאו ${mainIssueTotal} בעיות לטיפול${quickFixTotal ? ` ו־${quickFixTotal} הצעות Quick Fix` : ''}.`
   } else if (api.score >= 65) {
-    summaryText = `קובץ ${fileLabel} דורש שיפורים משמעותיים. נמצאו ${summary.totalIssues} בעיות.`
+    summaryText = `קובץ ${fileLabel} דורש שיפורים משמעותיים. נמצאו ${mainIssueTotal} בעיות${quickFixTotal ? ` ו־${quickFixTotal} הצעות Quick Fix` : ''}.`
   } else {
-    summaryText = `קובץ ${fileLabel} אינו עומד בדרישות נגישות בסיסיות. יש לתקן ${summary.totalIssues} בעיות לפני פרסום.`
+    summaryText = `קובץ ${fileLabel} אינו עומד בדרישות נגישות בסיסיות. יש לתקן ${mainIssueTotal} בעיות לפני פרסום${quickFixTotal ? ` (${quickFixTotal} הצעות Quick Fix נפרדות)` : ''}.`
   }
 
   const criticalAnalysis =
@@ -160,7 +171,9 @@ export function normalizeScanResponse(api, clientFileName) {
       minute: '2-digit',
     }),
     score: typeof api.score === 'number' ? api.score : 0,
-    totalIssues: summary.totalIssues ?? issues.length,
+    totalIssues: mainIssueTotal,
+    mainIssueTotal,
+    quickFixTotal,
     severityCounts: {
       high: summary.high ?? 0,
       medium: summary.medium ?? 0,
@@ -168,6 +181,8 @@ export function normalizeScanResponse(api, clientFileName) {
     },
     summary: summaryText,
     issues,
+    blockingIssues,
+    quickFixIssues,
     recommendations: [...new Set(issues.map((i) => i.recommendation).filter(Boolean))],
     criticalAnalysis,
     limitations: [

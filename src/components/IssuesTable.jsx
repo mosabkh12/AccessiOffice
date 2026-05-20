@@ -161,11 +161,22 @@ function InteractiveIssueRow({ issue, expandedId, onToggle }) {
   )
 }
 
+const QUICK_FIX_TITLE = 'אובייקטים שניתן לסמן כדקורטיביים'
+
+function splitIssueTiers(issues) {
+  const list = issues ?? []
+  const blocking = list.filter((i) => i.issueTier !== 'quickFix' && i.title !== QUICK_FIX_TITLE)
+  const quickFix = list.filter((i) => i.issueTier === 'quickFix' || i.title === QUICK_FIX_TITLE)
+  return { blocking, quickFix }
+}
+
 export default function IssuesTable({ issues, variant = 'interactive' }) {
   const [expandedId, setExpandedId] = useState(null)
-  const grouped = groupIssuesByCategory(issues)
+  const { blocking, quickFix } = splitIssueTiers(issues)
+  const groupedBlocking = groupIssuesByCategory(blocking)
+  const groupedQuickFix = groupIssuesByCategory(quickFix)
 
-  if (!issues?.length) {
+  if (!blocking.length && !quickFix.length) {
     return <p>לא נמצאו בעיות נגישות.</p>
   }
 
@@ -173,9 +184,11 @@ export default function IssuesTable({ issues, variant = 'interactive' }) {
     setExpandedId((prev) => (prev === id ? null : id))
   }
 
-  if (variant === 'report') {
+  function renderCategoryGroups(grouped, sectionLabel) {
+    if (!grouped.length) return null
     return (
-      <div className="issues-by-category">
+      <>
+        {sectionLabel ? <h3 className="issues-section-heading">{sectionLabel}</h3> : null}
         {grouped.map(({ category, issues: catIssues }) => {
           const byTitle = groupIssuesByTitle(catIssues)
           return (
@@ -205,13 +218,59 @@ export default function IssuesTable({ issues, variant = 'interactive' }) {
             </section>
           )
         })}
+      </>
+    )
+  }
+
+  if (variant === 'report') {
+    return (
+      <div className="issues-by-category">
+        {renderCategoryGroups(groupedBlocking, blocking.length ? 'בעיות נגישות' : null)}
+        {renderCategoryGroups(groupedQuickFix, quickFix.length ? 'הצעות Quick Fix' : null)}
+        {!blocking.length && !quickFix.length ? <p>לא נמצאו ממצאים.</p> : null}
       </div>
     )
   }
 
   return (
     <div className="issues-list issues-by-category">
-      {grouped.map(({ category, issues: catIssues }) => (
+      {quickFix.length > 0 && (
+        <section className="issue-tier-section issue-tier-section--quickfix">
+          <h3 className="issues-section-heading">הצעות Quick Fix ({quickFix.length})</h3>
+          <p className="card-hint">אובייקטים דקורטיביים — לא נספרים בחומרת הבעיות הראשית.</p>
+          {groupedQuickFix.map(({ category, issues: catIssues }) => (
+            <section key={`qf-${category}`} className="issue-category-group">
+              <h3 className="issue-category-heading">
+                {category}
+                <span className="issue-category-count">{catIssues.length}</span>
+              </h3>
+              <div className="issues-table-compact" role="table" aria-label={`Quick Fix: ${category}`}>
+                <div className="issues-table-head" role="row">
+                  <span role="columnheader">הצעה</span>
+                  <span role="columnheader">חומרה</span>
+                  <span role="columnheader">WCAG</span>
+                  <span role="columnheader">מיקום</span>
+                  <span role="columnheader">פעולה</span>
+                </div>
+                {catIssues.map((issue) => (
+                  <InteractiveIssueRow
+                    key={issue.id}
+                    issue={issue}
+                    expandedId={expandedId}
+                    onToggle={toggle}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
+        </section>
+      )}
+      {blocking.length > 0 && (
+        <section className="issue-tier-section">
+          <h3 className="issues-section-heading">בעיות נגישות ({blocking.length})</h3>
+        </section>
+      )}
+      {groupedBlocking.map(({ category, issues: catIssues }) => (
         <section key={category} className="issue-category-group">
           <h3 className="issue-category-heading">
             {category}
@@ -236,6 +295,9 @@ export default function IssuesTable({ issues, variant = 'interactive' }) {
           </div>
         </section>
       ))}
+      {!blocking.length && quickFix.length > 0 ? (
+        <p className="card-hint">לא נמצאו בעיות חוסמות — רק הצעות Quick Fix.</p>
+      ) : null}
     </div>
   )
 }

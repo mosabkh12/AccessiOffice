@@ -1,5 +1,8 @@
 import { getWcagRule, type WcagRuleKey } from './wcagRules.js'
+import { OFFICE_TITLES } from './officeCategories.js'
 import type { Confidence, ScanIssue, Severity } from '../types/scan.types.js'
+
+export type IssueTier = 'blocking' | 'quickFix'
 
 export interface IssueDraft {
   id: string
@@ -12,6 +15,16 @@ export interface IssueDraft {
   recommendation: string
   location: string
   confidence: Confidence
+  /** Office-like: Quick Fix suggestions are not counted as main accessibility errors. */
+  issueTier?: IssueTier
+}
+
+export function isQuickFixDraft(draft: Pick<IssueDraft, 'title' | 'issueTier'>): boolean {
+  return draft.issueTier === 'quickFix' || draft.title === OFFICE_TITLES.decorativeCandidates
+}
+
+export function isBlockingIssue(issue: ScanIssue): boolean {
+  return issue.title !== OFFICE_TITLES.decorativeCandidates
 }
 
 export interface ExtractedSignals {
@@ -33,6 +46,8 @@ export interface ExtractedSignals {
   missingAltCount?: number
   decorativeCandidateCount?: number
   readingOrderRiskSlides?: number[]
+  mainIssueTotal?: number
+  quickFixTotal?: number
 }
 
 export function buildScanIssue(draft: IssueDraft): ScanIssue {
@@ -55,17 +70,22 @@ export function buildScanIssue(draft: IssueDraft): ScanIssue {
 }
 
 export function calculateScore(issues: ScanIssue[]): number {
+  const blocking = issues.filter(isBlockingIssue)
   const weights = { High: 12, Medium: 7, Low: 3 } as const
-  const penalty = issues.reduce((sum, i) => sum + weights[i.severity], 0)
+  const penalty = blocking.reduce((sum, i) => sum + weights[i.severity], 0)
   return Math.max(0, Math.min(100, 100 - penalty))
 }
 
 export function buildSummary(issues: ScanIssue[]) {
+  const blocking = issues.filter(isBlockingIssue)
+  const quickFix = issues.filter((i) => !isBlockingIssue(i))
   return {
-    totalIssues: issues.length,
-    high: issues.filter((i) => i.severity === 'High').length,
-    medium: issues.filter((i) => i.severity === 'Medium').length,
-    low: issues.filter((i) => i.severity === 'Low').length,
+    totalIssues: blocking.length,
+    mainIssueTotal: blocking.length,
+    quickFixTotal: quickFix.length,
+    high: blocking.filter((i) => i.severity === 'High').length,
+    medium: blocking.filter((i) => i.severity === 'Medium').length,
+    low: blocking.filter((i) => i.severity === 'Low').length,
   }
 }
 

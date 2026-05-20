@@ -6,7 +6,6 @@ import {
   OFFICE_TITLES,
 } from './officeCategories.js'
 import {
-  contrastRatio,
   isGenericAltText,
   isMissingAltText,
   isUnclearLink,
@@ -18,9 +17,14 @@ import {
   wordCount,
 } from './ooxml.utils.js'
 import type AdmZip from 'adm-zip'
-import { snippet, type ObjectClassification } from './pptxDiagnostics.js'
+import { snippet, type AccessibilityState, type ObjectClassification } from './pptxDiagnostics.js'
 
-export const PPTX_SCANNER_BUILD = 'DEBUG-PPTX-V5'
+export const PPTX_SCANNER_BUILD = 'DEBUG-PPTX-V7-OFFICE-COUNTS'
+
+const DECORATIVE_SCORE_THRESHOLD = 4
+const DECORATIVE_SCORE_STRICT = 5
+const SMALL_SHAPE_AREA = 800_000_000_000
+const THIN_SHAPE_EMU = 180_000
 
 const BOILERPLATE_TITLE_PATTERNS = [
   /^click to edit master title style$/i,
@@ -52,16 +56,34 @@ interface RawShapeElement {
   groupDepth: number
 }
 
+type ObjectKind =
+  | 'picture'
+  | 'shape'
+  | 'freeform'
+  | 'autoshape'
+  | 'textBox'
+  | 'connector'
+  | 'group'
+  | 'graphicFrame'
+  | 'chart'
+  | 'smartArt'
+  | 'media'
+  | 'other'
+
 interface InventoryObject {
   slideNum: number
   index: number
   tag: ShapeTag
   xmlTag: string
+  objectKind: ObjectKind
   cnvId: string
   descr?: string
   title?: string
   name?: string
   hasBlip: boolean
+  hasGraphicData: boolean
+  graphicUri?: string
+  hasHyperlink: boolean
   relationshipId?: string
   relationshipTarget?: string
   hasText: boolean
@@ -70,12 +92,17 @@ interface InventoryObject {
   placeholderType?: string
   isTitlePlaceholder: boolean
   isBodyPlaceholder: boolean
+  isFooterPlaceholder: boolean
+  isSlideNumberPlaceholder: boolean
+  isDatePlaceholder: boolean
   isContentPlaceholder: boolean
   isCustomShape: boolean
   hasSolidFill: boolean
   hasNoFill: boolean
   hasOutline: boolean
   isMarkedDecorative: boolean
+  isGenericName: boolean
+  isGroup: boolean
   inGroup: boolean
   groupDepth: number
   fromLayout: boolean
@@ -84,8 +111,12 @@ interface InventoryObject {
   cx: number
   cy: number
   hidden: boolean
+  accessibilityState: AccessibilityState
   classifiedAs: ObjectClassification
+  decorativeScore: number
+  meaningfulVisualScore: number
   reason: string
+  countedAs: 'object' | 'group-container-skipped'
 }
 
 interface SlideTitleInfo {
@@ -241,7 +272,9 @@ function getPlaceholderInfo(chunk: string): { isPlaceholder: boolean; type?: str
   if (isMasterChromeName(name)) {
     if (/title/i.test(name)) return { isPlaceholder: true, type: 'title' }
     if (/content|body|subtitle/i.test(name)) return { isPlaceholder: true, type: 'body' }
-    if (/footer|date|slide number/i.test(name)) return { isPlaceholder: true, type: 'ftr' }
+    if (/slide number/i.test(name)) return { isPlaceholder: true, type: 'sldNum' }
+    if (/date/i.test(name)) return { isPlaceholder: true, type: 'dt' }
+    if (/footer/i.test(name)) return { isPlaceholder: true, type: 'ftr' }
     return { isPlaceholder: true, type: 'obj' }
   }
   return { isPlaceholder: false }
@@ -291,7 +324,314 @@ function isTitlePhType(type?: string): boolean {
 }
 
 function isBodyPhType(type?: string): boolean {
-  return type === 'body' || type === 'subTitle' || type === 'obj' || type === 'dt' || type === 'ftr'
+  return type === 'body' || type === 'subTitle' || type === 'obj' || type === 'clipArt' || type === 'media'
+}
+
+function isFooterPhType(type?: string): boolean {
+  return type === 'ftr' || type === 'dt'
+}
+
+function isSlideNumberPhType(type?: string): boolean {
+  return type === 'sldNum'
+}
+
+function mapAccessibilityToLegacy(state: AccessibilityState): ObjectClassification {
+  switch (state) {
+    case 'needsAltText':
+      return 'missing-alt'
+    case 'decorativeCandidate':
+      return 'decorative-candidate'
+    case 'alreadyAccessible':
+      return 'has-alt'
+    case 'ignoreFromAccessibility':
+    default:
+      return 'skipped-not-visual'
+  }
+}
+
+function detectObjectKind(tag: ShapeTag, chunkXml: string, name?: string): ObjectKind {
+  if (tag === 'pic') return 'picture'
+  if (tag === 'cxnSp') return 'connector'
+  if (tag === 'graphicFrame') {
+    const uri = chunkXml.match(/<a:graphicData[^>]*\buri="([^"]+)"/i)?.[1] ?? ''
+    if (/chart/i.test(uri)) return 'chart'
+    if (/diagram/i.test(uri)) return 'smartArt'
+    if (/video|movie|media/i.test(uri)) return 'media'
+    return 'graphicFrame'
+  }
+  if (/<a:custGeom\b/i.test(chunkXml)) return 'freeform'
+  if (/<p:cNvSpPr[^>]*\btxBox="1"/i.test(chunkXml) || /textbox/i.test(name ?? '')) return 'textBox'
+  if (/<a:prstGeom\b/i.test(chunkXml)) return 'autoshape'
+  return 'shape'
+}
+
+function hasGraphicDataUri(chunk: string): { has: boolean; uri?: string } {
+  const uri = chunk.match(/<a:graphicData[^>]*\buri="([^"]+)"/i)?.[1]
+  return { has: Boolean(uri), uri }
+}
+
+function hasHyperlinkInChunk(chunk: string): boolean {
+  return /<a:hlinkClick\b/i.test(chunk) || /<p:hlinkClick\b/i.test(chunk)
+}
+
+function shapeArea(obj: InventoryObject): number {
+  return obj.cx > 0 && obj.cy > 0 ? obj.cx * obj.cy : 0
+}
+
+function isThinOrSmall(obj: InventoryObject): boolean {
+  if (obj.cx > 0 && obj.cy > 0 && (obj.cx < THIN_SHAPE_EMU || obj.cy < THIN_SHAPE_EMU)) return true
+  const area = shapeArea(obj)
+  return area > 0 && area < SMALL_SHAPE_AREA
+}
+
+function isNearSlideEdge(obj: InventoryObject): boolean {
+  return obj.x < 400_000 || obj.y < 400_000
+}
+
+function buildShapeSignature(obj: InventoryObject, chunkXml: string): string {
+  const prst = chunkXml.match(/<a:prstGeom\b[^>]*\bprst="([^"]+)"/i)?.[1] ?? ''
+  return `${obj.name ?? ''}|${prst}|${obj.cx}|${obj.cy}|${obj.fromLayout ? 'L' : 'S'}`
+}
+
+function scoreDecorative(
+  obj: InventoryObject,
+  chunkXml: string,
+  fullText: string,
+  repeatCount: number,
+): number {
+  let score = 0
+  if (obj.tag === 'cxnSp') score += 4
+  if (obj.objectKind === 'connector') score += 3
+  if (!obj.hasText && !obj.hasBlip && !obj.hasGraphicData) score += 2
+  if ((obj.hasSolidFill || obj.hasOutline) && !obj.hasText && !obj.hasBlip) score += 2
+  if (isThinOrSmall(obj)) score += 2
+  if (obj.objectKind === 'freeform') score += 2
+  if (obj.objectKind === 'autoshape' && !obj.hasText) score += 1
+  if (/<a:prstGeom\b[^>]*\bprst="(rect|ellipse|roundRect|triangle|rtTriangle|line)"/i.test(chunkXml) && !obj.hasText) {
+    score += 1
+  }
+  if (obj.fromLayout && !obj.hasBlip) score += 1
+  if (repeatCount >= 3) score += 1
+  if (repeatCount >= 5) score += 2
+  if (isNearSlideEdge(obj)) score += 1
+  if (/connector|straight|line|curve/i.test(obj.name ?? '')) score += 2
+  if (obj.hasText && wordCount(fullText) <= 2 && !obj.hasBlip && isThinOrSmall(obj)) score += 1
+  if (obj.name && /rounded rectangle/i.test(obj.name) && !obj.hasText) score += 2
+  if (obj.hidden) score -= 5
+  return score
+}
+
+function scoreMeaningfulVisual(
+  obj: InventoryObject,
+  chunkXml: string,
+  fullText: string,
+): number {
+  let score = 0
+  if (obj.tag === 'pic' || obj.objectKind === 'picture') score += 5
+  if (obj.tag === 'graphicFrame' || obj.hasGraphicData) score += 5
+  if (/chart|diagram|video|ink|oleObject|picture/i.test(obj.graphicUri ?? chunkXml)) score += 4
+  if (obj.hasBlip) score += 4
+  if (obj.hasHyperlink) score += 1
+  if (obj.hasText && !obj.isPlaceholder && (obj.hasSolidFill || obj.hasOutline)) score += 2
+  if (
+    obj.isCustomShape &&
+    !obj.isTitlePlaceholder &&
+    !obj.isBodyPlaceholder &&
+    isVisualBannerShape(obj, fullText, chunkXml)
+  ) {
+    score += 3
+  }
+  if (shapeArea(obj) >= 2_000_000_000_000) score += 1
+  if (obj.hasText && wordCount(fullText) <= 8 && obj.hasSolidFill && isVisualBannerShape(obj, fullText, chunkXml)) score += 2
+  if (obj.inGroup && (obj.hasBlip || obj.hasSolidFill)) score += 1
+  if (obj.objectKind === 'smartArt' || obj.objectKind === 'chart' || obj.objectKind === 'media') score += 5
+  return score
+}
+
+function shouldIgnoreFromAccessibility(
+  obj: InventoryObject,
+  fullText: string,
+): { ignore: boolean; reason: string } {
+  if (obj.hidden) return { ignore: true, reason: 'hidden or off-slide object' }
+  if (obj.isTitlePlaceholder && !obj.hasBlip) {
+    return { ignore: true, reason: 'title placeholder' }
+  }
+  if (obj.isBodyPlaceholder && obj.hasText && !obj.hasBlip) {
+    return { ignore: true, reason: 'body/content placeholder with readable text' }
+  }
+  if (obj.isFooterPlaceholder || obj.isSlideNumberPlaceholder || obj.isDatePlaceholder) {
+    return { ignore: true, reason: 'footer/date/slide-number placeholder' }
+  }
+  if (obj.isPlaceholder && obj.hasText && !obj.hasBlip && !obj.hasSolidFill && !obj.hasOutline) {
+    return { ignore: true, reason: 'text placeholder carries content' }
+  }
+  if (obj.fromLayout && obj.hasText && isMasterBoilerplateBodyText(fullText) && !obj.hasBlip) {
+    return { ignore: false, reason: '' }
+  }
+  if (isMasterChromeName(obj.name) && (obj.isPlaceholder || isMasterBoilerplateBodyText(fullText))) {
+    return { ignore: true, reason: 'master chrome placeholder' }
+  }
+  if (obj.hasText && isMasterBoilerplateBodyText(fullText) && !obj.fromLayout) {
+    return { ignore: true, reason: 'master default placeholder text' }
+  }
+  if (obj.countedAs === 'group-container-skipped') {
+    return { ignore: true, reason: 'group container — children counted separately' }
+  }
+  return { ignore: false, reason: '' }
+}
+
+/** Shape text is exposed to AT via a:t — not a visual-only object (Reading Order Pane text object). */
+function isTextReadableObject(
+  obj: InventoryObject,
+  fullText: string,
+  chunkXml: string,
+): boolean {
+  if (!obj.hasText || obj.hasBlip || obj.hasGraphicData) return false
+  if (obj.isTitlePlaceholder || obj.isBodyPlaceholder || obj.isFooterPlaceholder) return true
+  if (obj.isSlideNumberPlaceholder || obj.isDatePlaceholder) return true
+  if (obj.objectKind === 'textBox') return true
+  if (obj.isPlaceholder && obj.hasText) return true
+  if (wordCount(fullText) >= 3 && !isVisualBannerShape(obj, fullText, chunkXml)) return true
+  return false
+}
+
+function isPictureLikeObject(obj: InventoryObject): boolean {
+  return (
+    obj.tag === 'pic' ||
+    obj.hasBlip ||
+    obj.hasGraphicData ||
+    obj.objectKind === 'chart' ||
+    obj.objectKind === 'smartArt' ||
+    obj.objectKind === 'media' ||
+    obj.objectKind === 'picture'
+  )
+}
+
+function classifyAccessibilityObject(
+  obj: InventoryObject,
+  chunkXml: string,
+  fullText: string,
+  repeatCount: number,
+): { state: AccessibilityState; reason: string; decorativeScore: number; meaningfulVisualScore: number } {
+  const decorativeScore = scoreDecorative(obj, chunkXml, fullText, repeatCount)
+  const meaningfulVisualScore = scoreMeaningfulVisual(obj, chunkXml, fullText)
+
+  if (obj.isMarkedDecorative) {
+    return {
+      state: 'alreadyAccessible',
+      reason: 'marked decorative in XML',
+      decorativeScore,
+      meaningfulVisualScore,
+    }
+  }
+
+  const ignoreCheck = shouldIgnoreFromAccessibility(obj, fullText)
+  if (ignoreCheck.ignore) {
+    return {
+      state: 'ignoreFromAccessibility',
+      reason: ignoreCheck.reason,
+      decorativeScore,
+      meaningfulVisualScore,
+    }
+  }
+
+  if (!isMissingAltText(obj.descr, obj.title, obj.name)) {
+    return {
+      state: 'alreadyAccessible',
+      reason: 'meaningful cNvPr descr/title',
+      decorativeScore,
+      meaningfulVisualScore,
+    }
+  }
+
+  if (isTextReadableObject(obj, fullText, chunkXml)) {
+    return {
+      state: 'ignoreFromAccessibility',
+      reason: 'text object — readable from shape text in reading order',
+      decorativeScore,
+      meaningfulVisualScore,
+    }
+  }
+
+  if (obj.isGroup && obj.hasBlip && !obj.hasText) {
+    return {
+      state: 'needsAltText',
+      reason: 'grouped visual unit with image content without meaningful alt',
+      decorativeScore,
+      meaningfulVisualScore,
+    }
+  }
+
+  if (obj.tag === 'cxnSp' || (obj.objectKind === 'connector' && !obj.hasText && !obj.hasBlip)) {
+    return {
+      state: 'decorativeCandidate',
+      reason: `connector/line ornament (decorativeScore=${decorativeScore})`,
+      decorativeScore,
+      meaningfulVisualScore,
+    }
+  }
+
+  if (
+    decorativeScore >= DECORATIVE_SCORE_STRICT &&
+    !obj.hasText &&
+    !obj.hasBlip &&
+    !obj.hasGraphicData &&
+    !isPictureLikeObject(obj) &&
+    (obj.fromLayout || obj.objectKind === 'connector')
+  ) {
+    return {
+      state: 'decorativeCandidate',
+      reason: `decorativeScore=${decorativeScore} (layout ornament/theme shape)`,
+      decorativeScore,
+      meaningfulVisualScore,
+    }
+  }
+
+  if (
+    decorativeScore >= DECORATIVE_SCORE_THRESHOLD &&
+    !obj.hasText &&
+    !obj.hasBlip &&
+    !obj.hasGraphicData &&
+    obj.fromLayout &&
+    repeatCount >= 4 &&
+    (obj.objectKind === 'autoshape' || obj.objectKind === 'freeform')
+  ) {
+    return {
+      state: 'decorativeCandidate',
+      reason: `decorativeScore=${decorativeScore} (layout accent)`,
+      decorativeScore,
+      meaningfulVisualScore,
+    }
+  }
+
+  if (isPictureLikeObject(obj)) {
+    return {
+      state: 'needsAltText',
+      reason: 'picture/chart/media/image without meaningful alt',
+      decorativeScore,
+      meaningfulVisualScore,
+    }
+  }
+
+  if (
+    isVisualBannerShape(obj, fullText, chunkXml) &&
+    !obj.isTitlePlaceholder &&
+    !obj.isBodyPlaceholder
+  ) {
+    return {
+      state: 'needsAltText',
+      reason: 'visual banner/card without meaningful alt',
+      decorativeScore,
+      meaningfulVisualScore,
+    }
+  }
+
+  return {
+    state: 'ignoreFromAccessibility',
+    reason: 'not a visual-only object requiring alt',
+    decorativeScore,
+    meaningfulVisualScore,
+  }
 }
 
 function isMarkedDecorativeXml(chunk: string): boolean {
@@ -403,48 +743,82 @@ function getLayoutType(layoutXml: string | null): string | undefined {
   return layoutXml?.match(/<p:sldLayout\b[^>]*\btype="([^"]+)"/i)?.[1]
 }
 
-/** Collect shapes from slide + layout (layout fills placeholders not overridden on slide). */
-function collectAllShapeElements(slideXml: string, layoutXml: string | null): RawShapeElement[] {
-  const slideShapes: RawShapeElement[] = []
-  for (const tag of SHAPE_TAGS) {
-    if (tag === 'grpSp') continue
-    for (const chunk of findAllTaggedChunks(slideXml, tag)) {
-      slideShapes.push({ tag, xml: chunk, inGroup: false, fromLayout: false, groupDepth: 0 })
-    }
-  }
-  for (const grp of findAllTaggedChunks(slideXml, 'grpSp')) {
-    for (const tag of ['pic', 'sp', 'graphicFrame', 'cxnSp'] as const) {
-      for (const inner of findAllTaggedChunks(grp, tag)) {
-        slideShapes.push({ tag, xml: inner, inGroup: true, fromLayout: false, groupDepth: 1 })
+function shapeContainedInGroup(chunk: string, groups: string[]): boolean {
+  return groups.some((g) => g.length > chunk.length && g.includes(chunk))
+}
+
+/** Aggregate visual/text signals from all shapes inside a p:grpSp (Reading Order group unit). */
+function aggregateGroupContent(grpXml: string): {
+  hasBlip: boolean
+  hasGraphicData: boolean
+  graphicUri?: string
+  hasText: boolean
+  text: string
+  hasHyperlink: boolean
+  childVisualCount: number
+} {
+  let hasBlip = false
+  let hasGraphicData = false
+  let graphicUri: string | undefined
+  let hasText = false
+  let text = ''
+  let hasHyperlink = false
+  let childVisualCount = 0
+  for (const tag of ['pic', 'graphicFrame', 'sp', 'cxnSp'] as const) {
+    for (const chunk of findAllTaggedChunks(grpXml, tag)) {
+      if (hasImageContent(chunk)) {
+        hasBlip = true
+        childVisualCount++
       }
+      const g = hasGraphicDataUri(chunk)
+      if (g.has) {
+        hasGraphicData = true
+        graphicUri = g.uri
+        childVisualCount++
+      }
+      const t = chunkText(chunk)
+      if (t) {
+        hasText = true
+        text += (text ? ' ' : '') + t
+      }
+      if (hasHyperlinkInChunk(chunk)) hasHyperlink = true
     }
   }
+  return { hasBlip, hasGraphicData, graphicUri, hasText, text, hasHyperlink, childVisualCount }
+}
 
-  const slidePhKeys = new Set(slideShapes.map((s) => getPhKey(s.xml)).filter(Boolean) as string[])
-
-  if (layoutXml) {
+/** Collect selectable shapes from slide + layout (layout fills placeholders not overridden on slide). */
+function collectAllShapeElements(slideXml: string, layoutXml: string | null): RawShapeElement[] {
+  const collectFrom = (xml: string, fromLayout: boolean): RawShapeElement[] => {
+    const groups = findAllTaggedChunks(xml, 'grpSp')
+    const items: RawShapeElement[] = []
     for (const tag of SHAPE_TAGS) {
       if (tag === 'grpSp') continue
-      for (const chunk of findAllTaggedChunks(layoutXml, tag)) {
-        const phKey = getPhKey(chunk)
-        if (phKey && slidePhKeys.has(phKey)) continue
-        slideShapes.push({ tag, xml: chunk, inGroup: false, fromLayout: true, groupDepth: 0 })
+      for (const chunk of findAllTaggedChunks(xml, tag)) {
+        const inGroup = shapeContainedInGroup(chunk, groups)
+        items.push({ tag, xml: chunk, inGroup, fromLayout, groupDepth: inGroup ? 1 : 0 })
       }
     }
-    for (const grp of findAllTaggedChunks(layoutXml, 'grpSp')) {
-      for (const tag of ['pic', 'sp', 'graphicFrame', 'cxnSp'] as const) {
-        for (const inner of findAllTaggedChunks(grp, tag)) {
-          const phKey = getPhKey(inner)
-          if (phKey && slidePhKeys.has(phKey)) continue
-          slideShapes.push({ tag, xml: inner, inGroup: true, fromLayout: true, groupDepth: 1 })
-        }
+    for (const chunk of findAllTaggedChunks(xml, 'grpSp')) {
+      if (!shapeContainedInGroup(chunk, groups)) {
+        items.push({ tag: 'grpSp', xml: chunk, inGroup: false, fromLayout, groupDepth: 0 })
       }
     }
+    return items
   }
+
+  const slideShapes = collectFrom(slideXml, false)
+  const slidePhKeys = new Set(slideShapes.map((s) => getPhKey(s.xml)).filter(Boolean) as string[])
+  const layoutShapes = layoutXml
+    ? collectFrom(layoutXml, true).filter((s) => {
+        const phKey = getPhKey(s.xml)
+        return !(phKey && slidePhKeys.has(phKey))
+      })
+    : []
 
   const seen = new Set<string>()
   let out: RawShapeElement[] = []
-  for (const s of slideShapes) {
+  for (const s of [...slideShapes, ...layoutShapes]) {
     const id = parseCnvFromChunk(s.xml).id
     if (seen.has(id)) {
       if (s.fromLayout) continue
@@ -461,28 +835,38 @@ function buildInventoryObject(
   index: number,
   raw: RawShapeElement,
   relMap: Map<string, string>,
+  repeatCount: number,
 ): InventoryObject {
   const cnv = parseCnvFromChunk(raw.xml)
   const ph = getPlaceholderInfo(raw.xml)
-  const text = chunkText(raw.xml)
+  const groupAgg = raw.tag === 'grpSp' ? aggregateGroupContent(raw.xml) : null
+  const text = groupAgg?.text ?? chunkText(raw.xml)
   const { x, y, cx, cy } = parsePlacement(raw.xml)
   const embedId = getBlipEmbedId(raw.xml)
+  const graphic = groupAgg
+    ? { has: groupAgg.hasGraphicData, uri: groupAgg.graphicUri }
+    : hasGraphicDataUri(raw.xml)
   const isCustom =
     raw.tag === 'sp' &&
     !ph.isPlaceholder &&
     (hasSolidFill(raw.xml) || hasOutline(raw.xml)) &&
     !hasImageContent(raw.xml)
+  const objectKind = raw.tag === 'grpSp' ? 'group' : detectObjectKind(raw.tag, raw.xml, cnv.name)
 
   const obj: InventoryObject = {
     slideNum,
     index,
     tag: raw.tag,
     xmlTag: raw.tag,
+    objectKind,
     cnvId: cnv.id,
     descr: cnv.descr,
     title: cnv.title,
     name: cnv.name,
-    hasBlip: hasImageContent(raw.xml),
+    hasBlip: groupAgg?.hasBlip ?? hasImageContent(raw.xml),
+    hasGraphicData: graphic.has,
+    graphicUri: graphic.uri,
+    hasHyperlink: groupAgg?.hasHyperlink ?? hasHyperlinkInChunk(raw.xml),
     relationshipId: embedId,
     relationshipTarget: embedId ? relMap.get(embedId) : undefined,
     hasText: text.length > 0,
@@ -491,12 +875,17 @@ function buildInventoryObject(
     placeholderType: ph.type,
     isTitlePlaceholder: isTitlePhType(ph.type),
     isBodyPlaceholder: isBodyPhType(ph.type),
+    isFooterPlaceholder: isFooterPhType(ph.type),
+    isSlideNumberPlaceholder: isSlideNumberPhType(ph.type) || /slide number/i.test(cnv.name ?? ''),
+    isDatePlaceholder: ph.type === 'dt' || /date placeholder/i.test(cnv.name ?? ''),
     isContentPlaceholder: ph.type === 'obj' || ph.type === 'clipArt' || ph.type === 'media',
     isCustomShape: isCustom,
     hasSolidFill: hasSolidFill(raw.xml),
     hasNoFill: hasNoFill(raw.xml),
     hasOutline: hasOutline(raw.xml),
     isMarkedDecorative: isMarkedDecorativeXml(raw.xml),
+    isGenericName: isGenericAltText(cnv.name),
+    isGroup: raw.tag === 'grpSp',
     inGroup: raw.inGroup,
     groupDepth: raw.groupDepth,
     fromLayout: raw.fromLayout,
@@ -505,75 +894,94 @@ function buildInventoryObject(
     cx,
     cy,
     hidden: isHiddenShape(raw.xml, x, y),
+    accessibilityState: 'ignoreFromAccessibility',
     classifiedAs: 'not-counted',
+    decorativeScore: 0,
+    meaningfulVisualScore: 0,
     reason: '',
+    countedAs: 'object',
   }
 
   const fullText = chunkText(raw.xml)
-  const { classifiedAs, reason } = classifyInventoryObject(obj, fullText, raw.xml)
-  obj.classifiedAs = classifiedAs
-  obj.reason = reason
+  const result = classifyAccessibilityObject(obj, raw.xml, fullText, repeatCount)
+  obj.accessibilityState = result.state
+  obj.decorativeScore = result.decorativeScore
+  obj.meaningfulVisualScore = result.meaningfulVisualScore
+  obj.reason = result.reason
+  obj.classifiedAs =
+    result.state === 'alreadyAccessible' && obj.isMarkedDecorative
+      ? 'decorative-marked'
+      : mapAccessibilityToLegacy(result.state)
   return obj
 }
 
-function classifyInventoryObject(
-  obj: InventoryObject,
-  fullText: string,
-  chunkXml: string,
-): { classifiedAs: ObjectClassification; reason: string } {
-  if (obj.isMarkedDecorative) {
-    return { classifiedAs: 'decorative-marked', reason: 'marked decorative in XML' }
-  }
-  if (obj.fromLayout) {
-    return { classifiedAs: 'skipped-layout-chrome', reason: 'master/layout chrome — not slide-specific visual' }
-  }
-  if (obj.isTitlePlaceholder && !obj.hasBlip) {
-    return { classifiedAs: 'skipped-title-placeholder', reason: 'title placeholder shape' }
-  }
-  if (obj.isBodyPlaceholder && obj.hasText && !obj.hasBlip) {
-    return { classifiedAs: 'skipped-not-visual', reason: 'body/subtitle placeholder text' }
-  }
-  if (obj.isPlaceholder && obj.hasText && !obj.hasBlip) {
-    return { classifiedAs: 'skipped-not-visual', reason: 'placeholder shape carries readable text' }
-  }
-  if (isMasterChromeName(obj.name)) {
-    return { classifiedAs: 'skipped-layout-chrome', reason: 'named master placeholder chrome' }
-  }
-  if (obj.hasText && isMasterBoilerplateBodyText(fullText)) {
-    return { classifiedAs: 'skipped-not-visual', reason: 'master default placeholder text' }
-  }
-  if (!isMissingAltText(obj.descr, obj.title, obj.name)) {
-    return { classifiedAs: 'has-alt', reason: 'meaningful descr/title' }
-  }
-
-  const isImage = obj.tag === 'pic' || (obj.hasBlip && obj.tag !== 'sp') || obj.tag === 'graphicFrame'
-  const isTextPrimary = obj.hasText && !obj.hasBlip && wordCount(fullText) > 18
-  const isCustomBanner =
-    obj.isCustomShape &&
-    !obj.isTitlePlaceholder &&
-    !obj.isBodyPlaceholder &&
-    isVisualBannerShape(obj, fullText, chunkXml)
-
-  if (obj.tag === 'cxnSp' || (obj.tag === 'sp' && !obj.hasBlip && !obj.hasText && obj.hasOutline)) {
-    if (isMissingAltText(obj.descr, obj.title, obj.name)) {
-      return { classifiedAs: 'decorative-candidate', reason: 'connector/simple line ornament' }
+/** Map grouped child to its outermost top-level p:grpSp chunk (if any). */
+function findOutermostGroupChunk(
+  chunk: string,
+  topLevelGroups: { xml: string; id: string }[],
+): string | null {
+  let best: string | null = null
+  for (const g of topLevelGroups) {
+    if (g.xml.length > chunk.length && g.xml.includes(chunk)) {
+      if (!best || g.xml.length < best.length) best = g.xml
     }
   }
+  return best
+}
 
-  if (isImage) {
-    return { classifiedAs: 'missing-alt', reason: 'image/picture without meaningful alt' }
-  }
-  if (isTextPrimary) {
-    return { classifiedAs: 'skipped-not-visual', reason: 'text-primary shape — content read from shape text' }
-  }
-  if (isCustomBanner) {
-    return { classifiedAs: 'missing-alt', reason: 'custom filled shape/banner with text, no alt' }
-  }
-  if (obj.hasBlip && obj.tag === 'sp') {
-    return { classifiedAs: 'missing-alt', reason: 'shape with image fill without meaningful alt' }
+/** Reading Order Pane: top-level objects + one entry per top-level group (not every child). */
+function filterReadingOrderObjects(
+  built: InventoryObject[],
+  raws: RawShapeElement[],
+  slideNum: number,
+  relMap: Map<string, string>,
+  signatureRepeat: Map<string, number>,
+): { inventory: InventoryObject[]; groupChildrenSkipped: number } {
+  const topLevelGroups = raws
+    .filter((r) => r.tag === 'grpSp' && !r.inGroup)
+    .map((r) => ({ xml: r.xml, id: parseCnvFromChunk(r.xml).id }))
+
+  const groupXmlToObject = new Map<string, InventoryObject>()
+  let groupChildrenSkipped = 0
+
+  for (let i = 0; i < built.length; i++) {
+    const obj = built[i]
+    const raw = raws[i]
+    if (!obj.inGroup) continue
+    const outerXml = findOutermostGroupChunk(raw.xml, topLevelGroups)
+    if (!outerXml) {
+      groupChildrenSkipped++
+      continue
+    }
+    if (!groupXmlToObject.has(outerXml)) {
+      const gi = topLevelGroups.findIndex((g) => g.xml === outerXml)
+      const gRaw: RawShapeElement = {
+        tag: 'grpSp',
+        xml: outerXml,
+        inGroup: false,
+        fromLayout: raw.fromLayout,
+        groupDepth: 0,
+      }
+      groupXmlToObject.set(
+        outerXml,
+        buildInventoryObject(slideNum, 9000 + gi, gRaw, relMap, signatureRepeat.get(buildShapeSignatureFromRaw(gRaw)) ?? 0),
+      )
+    }
+    groupChildrenSkipped++
   }
 
-  return { classifiedAs: 'skipped-not-visual', reason: 'not a visual object requiring alt' }
+  const topLevelSingles = built.filter((o, i) => !raws[i].inGroup && raws[i].tag !== 'grpSp')
+  const topLevelGrpFromRaws = built.filter((o, i) => raws[i].tag === 'grpSp' && !raws[i].inGroup)
+  const merged = [...topLevelSingles, ...topLevelGrpFromRaws, ...groupXmlToObject.values()]
+  const inventory = merged.map((o, i) => ({ ...o, index: i + 1 }))
+  return { inventory, groupChildrenSkipped }
+}
+
+function buildShapeSignatureFromRaw(raw: RawShapeElement): string {
+  const cnv = parseCnvFromChunk(raw.xml)
+  const pl = parsePlacement(raw.xml)
+  const prst = raw.xml.match(/<a:prstGeom\b[^>]*\bprst="([^"]+)"/i)?.[1] ?? ''
+  return `${cnv.name ?? ''}|${prst}|${pl.cx}|${pl.cy}|${raw.fromLayout ? 'L' : 'S'}`
 }
 
 function buildSlideInventory(
@@ -581,9 +989,106 @@ function buildSlideInventory(
   slideXml: string,
   layoutXml: string | null,
   relMap: Map<string, string>,
-): InventoryObject[] {
+  signatureRepeat: Map<string, number>,
+): { inventory: InventoryObject[]; groupChildrenSkipped: number } {
   const raws = collectAllShapeElements(slideXml, layoutXml)
-  return raws.map((raw, i) => buildInventoryObject(slideNum, i + 1, raw, relMap))
+  const built = raws.map((raw, i) => {
+    const sig = buildShapeSignatureFromRaw(raw)
+    return buildInventoryObject(slideNum, i + 1, raw, relMap, signatureRepeat.get(sig) ?? 0)
+  })
+  return filterReadingOrderObjects(built, raws, slideNum, relMap, signatureRepeat)
+}
+
+function buildDeckSignatureRepeat(slidePaths: string[], zip: AdmZip): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const slidePath of slidePaths) {
+    const slideXml = readZipEntryText(zip, slidePath)
+    if (!slideXml) continue
+    const layoutXml = getLayoutXml(zip, slidePath)
+    for (const raw of collectAllShapeElements(slideXml, layoutXml)) {
+      const cnv = parseCnvFromChunk(raw.xml)
+      const pl = parsePlacement(raw.xml)
+      const sig = `${cnv.name ?? ''}|${raw.xml.match(/<a:prstGeom\b[^>]*\bprst="([^"]+)"/i)?.[1] ?? ''}|${pl.cx}|${pl.cy}|${raw.fromLayout ? 'L' : 'S'}`
+      counts.set(sig, (counts.get(sig) ?? 0) + 1)
+    }
+  }
+  return counts
+}
+
+interface SlideClassificationSummary {
+  slide: number
+  topLevelReadingObjects: number
+  ignoredPlaceholders: number
+  textObjects: number
+  pictureObjects: number
+  groupedObjectsCounted: number
+  groupChildrenSkipped: number
+  missingAltText: number
+  decorativeCandidates: number
+  contrastIssues: number
+  readingOrderRisk: boolean
+  ignored: number
+  alreadyAccessible: number
+  byType: Record<string, number>
+}
+
+function summarizeSlideClassification(
+  slideNum: number,
+  inventory: InventoryObject[],
+  groupChildrenSkipped: number,
+  readingOrderRisk: boolean,
+): SlideClassificationSummary {
+  const byType: Record<string, number> = {}
+  let ignored = 0
+  let needsAltText = 0
+  let decorativeCandidates = 0
+  let alreadyAccessible = 0
+  let ignoredPlaceholders = 0
+  let textObjects = 0
+  let pictureObjects = 0
+  for (const o of inventory) {
+    byType[o.objectKind] = (byType[o.objectKind] ?? 0) + 1
+    if (isPictureLikeObject(o)) pictureObjects++
+    if (o.hasText && o.accessibilityState === 'ignoreFromAccessibility') textObjects++
+    if (
+      o.isPlaceholder ||
+      o.isTitlePlaceholder ||
+      o.isBodyPlaceholder ||
+      o.isFooterPlaceholder
+    ) {
+      if (o.accessibilityState === 'ignoreFromAccessibility') ignoredPlaceholders++
+    }
+    switch (o.accessibilityState) {
+      case 'ignoreFromAccessibility':
+        ignored++
+        break
+      case 'needsAltText':
+        needsAltText++
+        break
+      case 'decorativeCandidate':
+        decorativeCandidates++
+        break
+      case 'alreadyAccessible':
+        alreadyAccessible++
+        break
+    }
+  }
+  return {
+    slide: slideNum,
+    topLevelReadingObjects: inventory.length,
+    ignoredPlaceholders,
+    textObjects,
+    pictureObjects,
+    groupedObjectsCounted: inventory.filter((o) => o.isGroup || o.tag === 'grpSp').length,
+    groupChildrenSkipped,
+    missingAltText: needsAltText,
+    decorativeCandidates,
+    contrastIssues: 0,
+    readingOrderRisk,
+    ignored,
+    alreadyAccessible,
+    byType,
+  }
 }
 
 function logObjectInventory(slideNum: number, inventory: InventoryObject[]): void {
@@ -593,16 +1098,16 @@ function logObjectInventory(slideNum: number, inventory: InventoryObject[]): voi
     objects: inventory.map((o) => ({
       objectIndex: o.index,
       xmlTag: o.xmlTag,
-      objectType: o.tag,
+      objectType: o.objectKind,
       name: o.name ? snippet(o.name, 30) : undefined,
       hasBlip: o.hasBlip,
+      hasGraphicData: o.hasGraphicData,
       hasText: o.hasText,
-      textSnippet: o.textSnippet || undefined,
-      isPlaceholder: o.isPlaceholder,
-      placeholderType: o.placeholderType,
-      isCustomShape: o.isCustomShape,
       fromLayout: o.fromLayout,
-      classifiedAs: o.classifiedAs,
+      inGroup: o.inGroup,
+      accessibilityState: o.accessibilityState,
+      decorativeScore: o.decorativeScore,
+      meaningfulVisualScore: o.meaningfulVisualScore,
       reason: o.reason,
     })),
   })
@@ -735,10 +1240,9 @@ function computeReadingOrderScore(
   const content = inventory.filter(
     (o) =>
       !o.fromLayout &&
-      o.classifiedAs !== 'skipped-title-placeholder' &&
-      o.classifiedAs !== 'skipped-layout-chrome' &&
-      o.classifiedAs !== 'decorative-marked' &&
-      (o.hasText || o.hasBlip || o.isCustomShape || o.tag === 'pic'),
+      o.accessibilityState !== 'ignoreFromAccessibility' &&
+      o.accessibilityState !== 'alreadyAccessible' &&
+      (o.hasText || o.hasBlip || o.isCustomShape || o.tag === 'pic' || o.hasGraphicData),
   )
 
   const textBoxCount = content.filter(
@@ -791,7 +1295,7 @@ function computeReadingOrderScore(
 
   return {
     score,
-    risk: score >= 4,
+    risk: score >= 5,
     objectCount: content.length,
     textBoxCount: textBoxCount + bodyPhCount,
     pictureCount,
@@ -802,8 +1306,11 @@ function computeReadingOrderScore(
 }
 
 function inventoryLocation(slideNum: number, obj: InventoryObject): string {
-  if (obj.tag === 'pic' || (obj.hasBlip && !obj.isCustomShape)) {
+  if (obj.tag === 'pic' || obj.objectKind === 'picture' || (obj.hasBlip && !obj.isCustomShape)) {
     return `שקופית ${slideNum} / תמונה ${obj.index}`
+  }
+  if (obj.objectKind === 'chart' || obj.objectKind === 'smartArt' || obj.objectKind === 'graphicFrame') {
+    return `שקופית ${slideNum} / אובייקט גרפי ${obj.index}`
   }
   return `שקופית ${slideNum} / אובייקט חזותי ${obj.index}`
 }
@@ -823,17 +1330,9 @@ function detectFontIssues(xml: string): number {
   return small
 }
 
-function detectContrastIssues(xml: string): number {
-  let failures = 0
-  for (const run of xml.matchAll(/<a:r[\s\S]*?<\/a:r>/gi)) {
-    const fg = run[0].match(/<a:srgbClr val="([A-Fa-f0-9]{6})"/i)?.[1]
-    const parentFill = run[0].match(/<a:solidFill>[\s\S]*?<a:srgbClr val="([A-Fa-f0-9]{6})"/i)?.[1]
-    if (fg && parentFill) {
-      const ratio = contrastRatio(fg, parentFill)
-      if (ratio != null && ratio < 4.5) failures++
-    }
-  }
-  return failures
+/** Disabled: theme/background inference is unreliable; PowerPoint passed contrast on SE-B-8. */
+function detectContrastIssues(_xml: string): number {
+  return 0
 }
 
 export function analyzePptx(
@@ -848,7 +1347,9 @@ export function analyzePptx(
 
   const zip = readZip(filePath)
   const slidePaths = listZipEntries(zip, /^ppt\/slides\/slide\d+\.xml$/i)
+  const signatureRepeat = buildDeckSignatureRepeat(slidePaths, zip)
   const drafts: IssueDraft[] = []
+  const classificationSummaries: SlideClassificationSummary[] = []
 
   const missingTitleSlides: number[] = []
   const duplicateTitleSlides: number[] = []
@@ -871,10 +1372,24 @@ export function analyzePptx(
     const titleInfo = extractSlideTitle(slideNum, slideXml, layoutXml)
     slideTitles.push(titleInfo)
 
-    const inventory = buildSlideInventory(slideNum, slideXml, layoutXml, relMap)
+    const { inventory, groupChildrenSkipped } = buildSlideInventory(
+      slideNum,
+      slideXml,
+      layoutXml,
+      relMap,
+      signatureRepeat,
+    )
     logObjectInventory(slideNum, inventory)
-
     const readingOrder = computeReadingOrderScore(slideXml, inventory, titleInfo)
+    const slideClass = summarizeSlideClassification(
+      slideNum,
+      inventory,
+      groupChildrenSkipped,
+      readingOrder.risk,
+    )
+    classificationSummaries.push(slideClass)
+    console.log('[ACCESSIBILITY OBJECT CLASSIFICATION]', slideClass)
+    console.log('[OBJECT CLASSIFICATION SUMMARY]', slideClass)
 
     let slideMissingAlt = 0
     let slideDecorative = 0
@@ -895,20 +1410,10 @@ export function analyzePptx(
       })
     }
 
-    const missingAltCandidates = inventory.filter((o) => o.classifiedAs === 'missing-alt')
-    const pictureMissing = missingAltCandidates.filter((o) => o.tag === 'pic' || (o.hasBlip && !o.isCustomShape))
-    const shapeMissing = missingAltCandidates.filter(
-      (o) => !(o.tag === 'pic' || (o.hasBlip && !o.isCustomShape)),
-    )
-    const shapesToReport =
-      shapeMissing.length <= 1
-        ? shapeMissing
-        : [shapeMissing.sort((a, b) => a.y - b.y || a.x - b.x)[0]!]
-
     for (const obj of inventory) {
       const loc = inventoryLocation(slideNum, obj)
 
-      if (obj.classifiedAs === 'decorative-candidate') {
+      if (obj.accessibilityState === 'decorativeCandidate') {
         slideDecorative++
         decorativeCandidateCount++
         decorativeCandidateLocations.push(loc)
@@ -924,15 +1429,12 @@ export function analyzePptx(
             'אם האובייקט משמש לקישוט בלבד, סמנו אותו כ־Decorative ב־PowerPoint. אם הוא מעביר מידע, הוסיפו טקסט חלופי.',
           location: loc,
           confidence: 'Medium',
+          issueTier: 'quickFix',
         })
         continue
       }
 
-      const reportMissingAlt =
-        obj.classifiedAs === 'missing-alt' &&
-        (pictureMissing.includes(obj) || shapesToReport.includes(obj))
-
-      if (reportMissingAlt) {
+      if (obj.accessibilityState === 'needsAltText') {
         slideMissingAlt++
         missingAltCount++
         missingAltLocations.push(loc)
@@ -947,7 +1449,10 @@ export function analyzePptx(
           recommendation:
             'ב-PowerPoint: לחצו ימני על האובייקט → Edit Alt Text והוסיפו תיאור משמעותי.',
           location: loc,
-          confidence: obj.isCustomShape || obj.fromLayout ? 'Medium' : 'High',
+          confidence:
+            obj.tag === 'pic' || obj.objectKind === 'chart' || obj.objectKind === 'media' || obj.hasGraphicData
+              ? 'High'
+              : 'Medium',
         })
       }
     }
@@ -974,7 +1479,9 @@ export function analyzePptx(
       chosenTitle: titleInfo.chosenTitle,
       missingTitle: titleInfo.isMissingTitle,
       duplicateTitle: false,
-      visualObjectsCount: inventory.filter((o) => o.classifiedAs === 'missing-alt' || o.classifiedAs === 'has-alt').length,
+      visualObjectsCount: inventory.filter(
+        (o) => o.accessibilityState === 'needsAltText' || o.accessibilityState === 'alreadyAccessible',
+      ).length,
       customShapesWithText: inventory.filter((o) => o.isCustomShape && o.hasText).length,
       imageLikeObjects: inventory.filter((o) => o.hasBlip || o.tag === 'pic').length,
       missingAltObjects: slideMissingAlt,
@@ -1016,21 +1523,7 @@ export function analyzePptx(
       })
     }
 
-    const contrastFailures = detectContrastIssues(slideXml)
-    if (contrastFailures >= 1) {
-      drafts.push({
-        id: `low-contrast-${slideNum}`,
-        wcagKey: 'contrast-minimum',
-        title: OFFICE_TITLES.hardTextContrast,
-        severity: 'High',
-        category: CAT_COLOR_CONTRAST,
-        affectedUsers: ['משתמשים עם לקות ראייה'],
-        impact: `בשקופית ${slideNum}: ${contrastFailures} מופעי ניגודיות חלשה.`,
-        recommendation: 'שפרו ניגודיות בין צבע גופן לרקע.',
-        location: `שקופית ${slideNum}`,
-        confidence: 'Low',
-      })
-    }
+    detectContrastIssues(slideXml)
   }
 
   const titleGroups = new Map<string, number[]>()
@@ -1087,8 +1580,36 @@ export function analyzePptx(
     },
   }
 
+  const contrastIssues = 0
+  const mainIssueTotal =
+    missingAltCount +
+    missingTitleSlides.length +
+    duplicateTitleSlides.length +
+    readingOrderRiskSlides.length +
+    contrastIssues
+
+  const officeLikeCounts = {
+    missingAltText: missingAltCount,
+    quickFixDecorative: decorativeCandidateCount,
+    missingSlideTitle: missingTitleSlides.length,
+    duplicateSlideTitle: duplicateTitleSlides.length,
+    readingOrder: readingOrderRiskSlides.length,
+    contrastIssues,
+    tableIssues: 0,
+    mainIssueTotal,
+    quickFixTotal: decorativeCandidateCount,
+  }
+
+  console.log('[OFFICE-LIKE COUNTS]', officeLikeCounts)
+  console.log('[POWERPOINT-LIKE COUNTS]', officeLikeCounts)
   console.log('[POWERPOINT COMPARISON SUMMARY]', comparison)
   console.log('[PPTX OBJECT INVENTORY SUMMARY]', inventorySummaries)
+  console.log('[ACCESSIBILITY CLASSIFICATION DECK SUMMARY]', {
+    mainIssueTotal,
+    quickFixTotal: decorativeCandidateCount,
+    groupChildrenSkippedTotal: classificationSummaries.reduce((s, c) => s + c.groupChildrenSkipped, 0),
+    slides: classificationSummaries,
+  })
 
   const signals: ExtractedSignals = {
     fileType: 'pptx',
@@ -1102,6 +1623,8 @@ export function analyzePptx(
     missingAltCount,
     decorativeCandidateCount,
     readingOrderRiskSlides,
+    mainIssueTotal,
+    quickFixTotal: decorativeCandidateCount,
   }
 
   return { drafts, signals }

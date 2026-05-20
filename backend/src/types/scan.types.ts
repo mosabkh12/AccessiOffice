@@ -22,6 +22,8 @@ export interface ScanIssue {
 
 export interface ScanSummary {
   totalIssues: number
+  mainIssueTotal?: number
+  quickFixTotal?: number
   high: number
   medium: number
   low: number

@@ -6,6 +6,12 @@ export function snippet(text: string, max = 40): string {
   return `${t.slice(0, max - 1)}…`
 }
 
+export type AccessibilityState =
+  | 'ignoreFromAccessibility'
+  | 'needsAltText'
+  | 'decorativeCandidate'
+  | 'alreadyAccessible'
+
 export type ObjectClassification =
   | 'missing-alt'
   | 'decorative-candidate'

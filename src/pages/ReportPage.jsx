@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import Button from '../components/Button.jsx'
 import ScoreRing from '../components/ScoreRing.jsx'
 import IssuesTable from '../components/IssuesTable.jsx'
+import { buildPassedChecks } from '../data/powerpointAssistantChecks.js'
 import { useScan } from '../context/ScanContext.jsx'
 
 const USER_LABELS = {
@@ -41,7 +42,12 @@ export default function ReportPage() {
     criticalAnalysis,
     severityCounts,
     totalIssues,
+    mainIssueTotal,
+    quickFixTotal,
   } = results
+
+  const passedChecks =
+    fileType === 'pptx' ? buildPassedChecks(issues, { quickFixTotal }) : []
 
   function handlePrint() {
     window.print()
@@ -100,13 +106,35 @@ export default function ReportPage() {
             <li><span className="severity-tag high">גבוהה</span> {severityCounts.high}</li>
             <li><span className="severity-tag medium">בינונית</span> {severityCounts.medium}</li>
             <li><span className="severity-tag low">נמוכה</span> {severityCounts.low}</li>
-            <li className="severity-total"><strong>סה&quot;כ בעיות:</strong> {totalIssues}</li>
+            <li className="severity-total">
+              <strong>בעיות נגישות:</strong> {mainIssueTotal ?? totalIssues}
+            </li>
+            {(quickFixTotal ?? 0) > 0 && (
+              <li className="severity-total">
+                <strong>הצעות Quick Fix:</strong> {quickFixTotal}
+              </li>
+            )}
           </ul>
           <p className="report-summary-para">{summary}</p>
         </section>
 
+        {passedChecks.length > 0 && (
+          <section className="report-section">
+            <h3>בדיקות שעברו בהצלחה</h3>
+            <ul className="report-passed-list">
+              {passedChecks.map((c) => (
+                <li key={`${c.category}-${c.title}`}>
+                  <span aria-hidden="true">✓ </span>
+                  {c.title}
+                  <span className="report-passed-list__cat"> ({c.category})</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         <section className="report-section">
-          <h3>פירוט בעיות</h3>
+          <h3>פירוט ממצאים</h3>
           <IssuesTable issues={issues} variant="report" />
         </section>
 
