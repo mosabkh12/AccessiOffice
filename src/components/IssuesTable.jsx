@@ -1,10 +1,29 @@
 import { useState } from 'react'
 
+function OccurrenceBadge({ count }) {
+  if (!count || count <= 1) return null
+  return <span className="occurrence-badge">{count}</span>
+}
+
+function LocationsList({ locations }) {
+  if (!locations?.length) return null
+  return (
+    <ul className="locations-list">
+      {locations.map((loc, i) => (
+        <li key={i}>{loc}</li>
+      ))}
+    </ul>
+  )
+}
+
 function IssueReportCard({ issue }) {
   return (
     <article className="report-issue-card">
       <header className="report-issue-card__header">
-        <h4>{issue.title}</h4>
+        <h4>
+          {issue.title}
+          <OccurrenceBadge count={issue.occurrenceCount} />
+        </h4>
         <span className={`severity-tag ${issue.severity}`}>{issue.severityLabel}</span>
       </header>
       <dl className="report-issue-card__meta">
@@ -20,6 +39,12 @@ function IssueReportCard({ issue }) {
           <dt>מיקום</dt>
           <dd>{issue.location}</dd>
         </div>
+        {issue.occurrenceCount > 1 && (
+          <div>
+            <dt>מופעים</dt>
+            <dd>{issue.occurrenceCount}</dd>
+          </div>
+        )}
       </dl>
       <dl className="report-issue-card__body">
         <div>
@@ -30,6 +55,12 @@ function IssueReportCard({ issue }) {
           <dt>השפעה</dt>
           <dd>{issue.impact}</dd>
         </div>
+        {issue.locations?.length > 1 && (
+          <div>
+            <dt>מיקומים</dt>
+            <dd><LocationsList locations={issue.locations} /></dd>
+          </div>
+        )}
         <div>
           <dt>המלצה</dt>
           <dd>{issue.recommendation}</dd>
@@ -52,7 +83,7 @@ export default function IssuesTable({ issues, variant = 'interactive' }) {
   const [expandedId, setExpandedId] = useState(null)
 
   if (!issues?.length) {
-    return <p>לא נמצאו בעיות נגישות.</p>
+    return <p>לא נמצאו פריטים.</p>
   }
 
   if (variant === 'report') {
@@ -85,7 +116,10 @@ export default function IssuesTable({ issues, variant = 'interactive' }) {
           return (
             <article key={issue.id} className="issue-row-wrap">
               <div className="issue-row" role="row">
-                <span className="issue-title" role="cell">{issue.title}</span>
+                <span className="issue-title" role="cell">
+                  {issue.title}
+                  <OccurrenceBadge count={issue.occurrenceCount} />
+                </span>
                 <span role="cell">
                   <span className={`severity-tag ${issue.severity}`}>
                     {issue.severityLabel}
@@ -125,6 +159,12 @@ export default function IssuesTable({ issues, variant = 'interactive' }) {
                       <dt>השפעה</dt>
                       <dd>{issue.impact}</dd>
                     </div>
+                    {issue.locations?.length > 1 && (
+                      <div>
+                        <dt>מיקומים ({issue.occurrenceCount})</dt>
+                        <dd><LocationsList locations={issue.locations} /></dd>
+                      </div>
+                    )}
                     <div>
                       <dt>המלצה</dt>
                       <dd>{issue.recommendation}</dd>

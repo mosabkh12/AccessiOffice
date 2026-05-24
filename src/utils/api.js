@@ -68,6 +68,14 @@ function normalizeIssue(raw) {
   const wcagCriterion = raw?.wcagCriterion || '—'
   const wcagLevel = raw?.wcagLevel || '—'
   const wcagPrinciple = raw?.wcagPrinciple || '—'
+  // occurrenceCount: prefer explicit field, fall back to locations array length, then 1
+  const locations = Array.isArray(raw?.locations) ? raw.locations : null
+  const occurrenceCount =
+    typeof raw?.occurrenceCount === 'number'
+      ? raw.occurrenceCount
+      : locations
+        ? locations.length
+        : 1
 
   return {
     id: raw?.id || `issue-${Math.random().toString(36).slice(2, 9)}`,
@@ -85,6 +93,8 @@ function normalizeIssue(raw) {
     impact: raw?.impact || 'לא צוינה השפעה.',
     recommendation: raw?.recommendation || 'לא צוינה המלצה.',
     location: raw?.location || '—',
+    occurrenceCount,
+    locations,
   }
 }
 
@@ -95,23 +105,62 @@ export function normalizeScanResponse(api, clientFileName) {
   const fileLabel = FILE_LABELS[fileType] ?? 'Office'
 
   const issues = (api.issues || []).map(normalizeIssue)
-  const summary = api.summary || { totalIssues: issues.length, high: 0, medium: 0, low: 0 }
+  const quickFix = (api.quickFix || []).map(normalizeIssue)
+  const summary = api.summary || {}
 
+  // Resolve occurrence-aware counts with backward-compatible fallbacks
+  const totalOccurrences  = summary.totalOccurrences  ?? issues.reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
+  const totalIssueTypes   = summary.totalIssueTypes   ?? issues.length
+  const highOccurrences   = summary.highOccurrences   ?? issues.filter(i => i.severity === 'high').reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
+  const mediumOccurrences = summary.mediumOccurrences ?? issues.filter(i => i.severity === 'medium').reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
+  const lowOccurrences    = summary.lowOccurrences    ?? issues.filter(i => i.severity === 'low').reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
+  const quickFixOccurrences = summary.quickFixOccurrences ?? quickFix.reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
+
+  // Summary text using occurrence counts
   let summaryText
-  if (summary.totalIssues === 0) {
-    summaryText =
-      'לא נמצאו בעיות נגישות משמעותיות בסריקה האוטומטית. מומלץ לבצע בדיקה ידנית לפני פרסום.'
-  } else if (api.score >= 85) {
-    summaryText = `קובץ ${fileLabel} עומד ברוב דרישות הנגישות, אך נמצאו ${summary.totalIssues} בעיות לטיפול.`
-  } else if (api.score >= 65) {
-    summaryText = `קובץ ${fileLabel} דורש שיפורים משמעותיים. נמצאו ${summary.totalIssues} בעיות.`
+  if (totalOccurrences === 0) {
+    summaryText = 'לא נמצאו בעיות נגישות משמעותיות בסריקה האוטומטית. מומלץ לבצע בדיקה ידנית לפני פרסום.'
   } else {
-    summaryText = `קובץ ${fileLabel} אינו עומד בדרישות נגישות בסיסיות. יש לתקן ${summary.totalIssues} בעיות לפני פרסום.`
+    summaryText = `הקובץ כולל ${totalOccurrences} ממצאי נגישות ב-${totalIssueTypes} סוגי בעיות. מומלץ לתקן לפני פרסום.`
+    if (quickFixOccurrences > 0) {
+      summaryText += ` בנוסף נמצאו ${quickFixOccurrences} הצעות Quick Fix לאובייקטים דקורטיביים.`
+    }
   }
 
   const criticalAnalysis =
     api.criticalAnalysis ||
     'סריקה אוטומטית מסייעת לזהות בעיות נפוצות, אך אינה מחליפה בדיקה אנושית מקצועית.'
+
+  // ── Debug: single source of truth for all UI counts ─────────────────────
+  const _byTitle = [
+    ...issues.map(i => ({
+      title: i.title,
+      occurrenceCount: i.occurrenceCount,
+      severity: i.severity,
+      locationsCount: i.locations?.length ?? 0,
+      isQuickFix: false,
+    })),
+    ...quickFix.map(i => ({
+      title: i.title,
+      occurrenceCount: i.occurrenceCount,
+      severity: i.severity,
+      locationsCount: i.locations?.length ?? 0,
+      isQuickFix: true,
+    })),
+  ]
+  console.log('[NORMALIZED ISSUE COUNTS]', {
+    totalIssueTypes,
+    totalOccurrences,
+    highOccurrences,
+    mediumOccurrences,
+    lowOccurrences,
+    quickFixOccurrences,
+    byTitle: _byTitle,
+  })
+  console.log('[DASHBOARD COUNTS]', { totalOccurrences, totalIssueTypes, highOccurrences, mediumOccurrences, quickFixOccurrences })
+  console.log('[ASSISTANT PANEL COUNTS]', _byTitle.map(i => `${i.title}: ${i.occurrenceCount}${i.isQuickFix ? ' (QF)' : ''}`))
+  console.log('[RESULTS TABLE COUNTS]', issues.map(i => `${i.title}: ${i.occurrenceCount}`))
+  console.log('[REPORT COUNTS]', { totalOccurrences, issues: issues.length, quickFix: quickFix.length })
 
   return {
     fileName,
@@ -126,14 +175,20 @@ export function normalizeScanResponse(api, clientFileName) {
       minute: '2-digit',
     }),
     score: typeof api.score === 'number' ? api.score : 0,
-    totalIssues: summary.totalIssues ?? issues.length,
-    severityCounts: {
-      high: summary.high ?? 0,
-      medium: summary.medium ?? 0,
-      low: summary.low ?? 0,
-    },
+    // Occurrence-aware counts (what the dashboard shows)
+    totalOccurrences,
+    totalIssueTypes,
+    highOccurrences,
+    mediumOccurrences,
+    lowOccurrences,
+    quickFixOccurrences,
+    quickFixCount: quickFix.length,
+    // Backward-compatible aliases
+    totalIssues: totalOccurrences,
+    severityCounts: { high: highOccurrences, medium: mediumOccurrences, low: lowOccurrences },
     summary: summaryText,
     issues,
+    quickFix,
     recommendations: [...new Set(issues.map((i) => i.recommendation).filter(Boolean))],
     criticalAnalysis,
     limitations: [

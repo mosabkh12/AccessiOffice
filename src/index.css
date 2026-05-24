@@ -166,6 +166,8 @@ h3 { font-size: 1.15rem; }
 .card-hint { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem; }
 .card--actions { border-color: var(--navy-light); }
 .card--error { border-color: #fc8181; background: var(--high-bg); }
+.quick-fix-title { color: var(--navy); }
+.report-quickfix-note { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem; }
 
 /* —— Buttons —— */
 .btn {
@@ -596,6 +598,8 @@ h3 { font-size: 1.15rem; }
 .stat-card--high .stat-value { color: var(--high); }
 .stat-card--medium .stat-value { color: var(--medium); }
 .stat-card--low .stat-value { color: var(--low); }
+.stat-card--quickfix .stat-value { color: var(--navy); }
+.stat-card .stat-sublabel { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.15rem; }
 
 .summary-banner {
   background: linear-gradient(135deg, var(--accent-soft) 0%, #fff 100%);
@@ -655,8 +659,47 @@ h3 { font-size: 1.15rem; }
 }
 
 .issue-row { background: #f8fafc; }
-.issue-title { font-weight: 600; font-size: 0.92rem; line-height: 1.4; }
+.issue-title { font-weight: 600; font-size: 0.92rem; line-height: 1.4; display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 .issue-location { font-size: 0.85rem; color: var(--text-muted); }
+
+/* Occurrence count badge — shows how many individual occurrences a grouped issue covers */
+.occurrence-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  height: 1.4rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--navy);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* Per-occurrence location list inside the expanded details panel */
+.locations-list {
+  margin: 0.35rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.locations-list li {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  padding-inline-start: 1rem;
+  position: relative;
+}
+.locations-list li::before {
+  content: '›';
+  position: absolute;
+  inset-inline-start: 0;
+  color: var(--accent);
+}
 
 .wcag-cell {
   display: flex;
@@ -837,6 +880,181 @@ h3 { font-size: 1.15rem; }
   margin-top: 1.5rem;
   padding-top: 1rem;
   border-top: 1px solid var(--border);
+}
+
+/* —— AssistantPanel —— */
+
+.card--assistant { padding: 0; overflow: hidden; }
+
+.assistant-panel {
+  font-family: inherit;
+  direction: rtl;
+}
+
+.ap-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1.25rem 0.65rem;
+  background: var(--navy);
+  color: #fff;
+}
+.ap-header__title { font-size: 0.95rem; font-weight: 700; }
+.ap-header__subtitle { font-size: 0.8rem; opacity: 0.8; }
+
+/* Section ------------------------------------------------------------------ */
+.ap-section { border-top: 1px solid var(--border); }
+.ap-section--qf { background: #f8fafc; }
+.ap-section--passed { background: #f0fdf4; }
+
+.ap-section__label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 1.25rem 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: rgba(0,0,0,0.025);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Tally chips inside section label */
+.ap-section__tally { display: flex; gap: 0.35rem; margin-inline-start: auto; }
+.ap-tally {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  color: #fff;
+}
+.ap-tally--high   { background: var(--high); }
+.ap-tally--medium { background: var(--medium); color: #333; }
+.ap-tally--qf     { background: var(--navy); }
+
+/* Severity marker dots ----------------------------------------------------- */
+.ap-marker {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ap-marker--high   { background: var(--high); }
+.ap-marker--medium { background: var(--medium); }
+.ap-marker--low    { background: var(--low); }
+.ap-marker--qf     { background: var(--navy); }
+.ap-marker--pass   { background: #22c55e; }
+
+/* Issue row ---------------------------------------------------------------- */
+.ap-issue { border-bottom: 1px solid var(--border); }
+.ap-issue:last-child { border-bottom: none; }
+
+.ap-issue__row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.6rem 1.25rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: start;
+  font-family: inherit;
+  font-size: 0.9rem;
+  color: var(--text);
+  transition: background 0.12s;
+}
+.ap-issue__row:hover { background: var(--accent-soft); }
+.ap-issue--open .ap-issue__row { background: var(--accent-soft); }
+
+.ap-issue__title { flex: 1; font-weight: 600; line-height: 1.35; }
+
+.ap-issue__count {
+  min-width: 1.6rem;
+  height: 1.6rem;
+  padding: 0 0.4rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+.ap-issue__count--high   { background: var(--high); }
+.ap-issue__count--medium { background: var(--medium); color: #333; }
+.ap-issue__count--low    { background: var(--low); }
+.ap-issue__count--qf     { background: var(--navy); }
+
+.ap-issue__chevron { font-size: 0.6rem; color: var(--text-muted); flex-shrink: 0; }
+
+/* Issue details panel ------------------------------------------------------ */
+.ap-issue__details {
+  padding: 0.6rem 1.25rem 0.85rem 2.5rem;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+/* Location list */
+.ap-locations {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.ap-location {
+  font-size: 0.84rem;
+  color: var(--text);
+  padding-inline-start: 1rem;
+  position: relative;
+  line-height: 1.4;
+}
+.ap-location::before { content: '›'; position: absolute; inset-inline-start: 0; color: var(--accent); }
+.ap-location--single { list-style: none; padding-inline-start: 1rem; }
+.ap-location--single::before { content: '›'; position: absolute; inset-inline-start: 0; color: var(--accent); }
+
+/* Meta dl inside details */
+.ap-issue__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.83rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+  margin-top: 0.1rem;
+}
+.ap-issue__meta div { display: flex; gap: 0.5rem; align-items: flex-start; }
+.ap-issue__meta dt { font-weight: 600; color: var(--text-muted); min-width: 4rem; flex-shrink: 0; }
+.ap-issue__meta dd { margin: 0; color: var(--text); line-height: 1.45; }
+
+/* Passed checks ------------------------------------------------------------ */
+.ap-check-pass {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem 1.25rem;
+  font-size: 0.88rem;
+  color: #166534;
+  border-bottom: 1px solid #dcfce7;
+}
+.ap-check-pass:last-child { border-bottom: none; }
+.ap-check-pass__label { font-weight: 500; }
+
+/* All pass state */
+.ap-all-pass {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 1rem 1.25rem;
+  font-size: 0.9rem;
+  color: #166534;
 }
 
 /* —— Score ring —— */

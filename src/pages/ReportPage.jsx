@@ -37,10 +37,16 @@ export default function ReportPage() {
     score,
     summary,
     issues,
+    quickFix,
+    quickFixCount,
+    quickFixOccurrences,
     recommendations,
     criticalAnalysis,
-    severityCounts,
-    totalIssues,
+    totalOccurrences,
+    totalIssueTypes,
+    highOccurrences,
+    mediumOccurrences,
+    lowOccurrences,
   } = results
 
   function handlePrint() {
@@ -95,20 +101,43 @@ export default function ReportPage() {
         </section>
 
         <section className="report-section">
-          <h3>סיכום חומרות</h3>
+          <h3>סיכום ממצאים</h3>
           <ul className="severity-summary-list">
-            <li><span className="severity-tag high">גבוהה</span> {severityCounts.high}</li>
-            <li><span className="severity-tag medium">בינונית</span> {severityCounts.medium}</li>
-            <li><span className="severity-tag low">נמוכה</span> {severityCounts.low}</li>
-            <li className="severity-total"><strong>סה&quot;כ בעיות:</strong> {totalIssues}</li>
+            <li><span className="severity-tag high">גבוהה</span> {highOccurrences ?? 0} מופעים</li>
+            <li><span className="severity-tag medium">בינונית</span> {mediumOccurrences ?? 0} מופעים</li>
+            {(lowOccurrences ?? 0) > 0 && (
+              <li><span className="severity-tag low">נמוכה</span> {lowOccurrences} מופעים</li>
+            )}
+            <li className="severity-total">
+              <strong>סה&quot;כ ממצאי נגישות:</strong> {totalOccurrences ?? 0}
+            </li>
+            <li className="severity-total">
+              <strong>סוגי בעיות:</strong> {totalIssueTypes ?? 0}
+            </li>
+            {(quickFixOccurrences ?? 0) > 0 && (
+              <li className="severity-total">
+                <strong>הצעות Quick Fix:</strong> {quickFixOccurrences}
+              </li>
+            )}
           </ul>
           <p className="report-summary-para">{summary}</p>
         </section>
 
         <section className="report-section">
-          <h3>פירוט בעיות</h3>
+          <h3>פירוט בעיות נגישות ({totalIssues})</h3>
           <IssuesTable issues={issues} variant="report" />
         </section>
+
+        {quickFixCount > 0 && (
+          <section className="report-section">
+            <h3>הצעות Quick Fix – אובייקטים דקורטיביים ({quickFixCount})</h3>
+            <p className="report-quickfix-note">
+              האובייקטים הבאים אינם נושאים תוכן מהותי ומומלץ לסמן אותם כדקורטיביים ב-PowerPoint,
+              כדי שקוראי מסך ידלגו עליהם ויחסכו מהמשתמש מידע מיותר.
+            </p>
+            <IssuesTable issues={quickFix} variant="report" />
+          </section>
+        )}
 
         <section className="report-section">
           <h3>המלצות לתיקון</h3>

@@ -16,9 +16,29 @@ export interface ScanIssue {
   impact: string
   recommendation: string
   location: string
+  /** How many individual occurrences this grouped issue covers (default 1) */
+  occurrenceCount?: number
+  /** Specific per-occurrence locations for expanded display */
+  locations?: string[]
+  confidence?: string
+  isQuickFix?: boolean
 }
 
 export interface ScanSummary {
+  /** Number of grouped issue objects (issue types) */
+  totalIssueTypes: number
+  highIssueTypes: number
+  mediumIssueTypes: number
+  lowIssueTypes: number
+  /** Sum of occurrenceCount across all real issues */
+  totalOccurrences: number
+  highOccurrences: number
+  mediumOccurrences: number
+  lowOccurrences: number
+  /** Quick Fix decorative suggestions */
+  quickFixTypes: number
+  quickFixOccurrences: number
+  /** Backward-compatible aliases */
   totalIssues: number
   high: number
   medium: number
@@ -34,4 +54,5 @@ export interface ScanResult {
   summary: ScanSummary
   issues: ScanIssue[]
   criticalAnalysis: string
+  quickFix?: ScanIssue[]
 }

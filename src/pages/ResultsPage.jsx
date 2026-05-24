@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Button from '../components/Button.jsx'
 import ScoreRing from '../components/ScoreRing.jsx'
-import IssuesTable from '../components/IssuesTable.jsx'
+import AssistantPanel from '../components/AssistantPanel.jsx'
 import { useScan } from '../context/ScanContext.jsx'
 
 const USER_LABELS = {
@@ -10,15 +10,8 @@ const USER_LABELS = {
   auditor: 'בודק/ת נגישות',
   lecturer: 'מרצה / מוסד לימודי',
 }
-
-const SCAN_LABELS = { basic: 'סריקה בסיסית', full: 'סריקה מלאה' }
-const FILE_LABELS = { docx: 'Word', pptx: 'PowerPoint', xlsx: 'Excel' }
-
-const SUMMARY_DEFAULT =
-  'על פי ממצאי הסריקה, הקובץ כולל בעיות נגישות שיש לתקן לפני פרסום או שיתוף.'
-
-const NO_ISSUES_MSG =
-  'לא נמצאו בעיות נגישות משמעותיות בסריקה האוטומטית. מומלץ לבצע בדיקה ידנית לפני פרסום.'
+const SCAN_LABELS  = { basic: 'סריקה בסיסית', full: 'סריקה מלאה' }
+const FILE_LABELS  = { docx: 'Word', pptx: 'PowerPoint', xlsx: 'Excel' }
 
 export default function ResultsPage() {
   const navigate = useNavigate()
@@ -33,15 +26,29 @@ export default function ResultsPage() {
 
   const {
     score,
-    totalIssues,
-    severityCounts,
+    totalOccurrences,
+    totalIssueTypes,
+    highOccurrences,
+    mediumOccurrences,
+    quickFixOccurrences,
     issues,
+    quickFix,
     fileName,
     fileType,
     userType,
     scanType,
-    summary,
   } = results
+
+  // All counts flow from the same normalized issues array — never computed separately
+  console.log('[RESULTS PAGE RENDER]', {
+    totalOccurrences,
+    totalIssueTypes,
+    highOccurrences,
+    mediumOccurrences,
+    quickFixOccurrences,
+    issueRows: issues.map(i => `${i.title}: ${i.occurrenceCount}`),
+    quickFixRows: quickFix.map(i => `${i.title}: ${i.occurrenceCount}`),
+  })
 
   return (
     <div className="page page-results">
@@ -55,45 +62,45 @@ export default function ResultsPage() {
         </dl>
       </header>
 
+      {/* ── Dashboard summary cards ──────────────────────────────────────────── */}
       <section className="dashboard-grid">
         <article className="card stat-card stat-card--score">
           <ScoreRing score={score} />
           <p className="stat-label">ציון נגישות</p>
           <p className="stat-sublabel">מתוך 100</p>
         </article>
+
         <article className="card stat-card">
-          <p className="stat-value">{totalIssues}</p>
-          <p className="stat-label">סה&quot;כ בעיות</p>
+          <p className="stat-value">{totalOccurrences ?? 0}</p>
+          <p className="stat-label">סה&quot;כ ממצאים</p>
+          <p className="stat-sublabel">{totalIssueTypes ?? 0} סוגי בעיות</p>
         </article>
+
         <article className="card stat-card stat-card--high">
-          <p className="stat-value">{severityCounts.high}</p>
+          <p className="stat-value">{highOccurrences ?? 0}</p>
           <p className="stat-label">חומרה גבוהה</p>
         </article>
+
         <article className="card stat-card stat-card--medium">
-          <p className="stat-value">{severityCounts.medium}</p>
+          <p className="stat-value">{mediumOccurrences ?? 0}</p>
           <p className="stat-label">חומרה בינונית</p>
         </article>
-        <article className="card stat-card stat-card--low">
-          <p className="stat-value">{severityCounts.low}</p>
-          <p className="stat-label">חומרה נמוכה</p>
-        </article>
+
+        {(quickFixOccurrences ?? 0) > 0 && (
+          <article className="card stat-card stat-card--quickfix">
+            <p className="stat-value">{quickFixOccurrences}</p>
+            <p className="stat-label">Quick Fix</p>
+          </article>
+        )}
       </section>
 
-      <article className="card summary-banner">
-        <h2 className="summary-banner__title">סיכום</h2>
-        <p>{totalIssues === 0 ? NO_ISSUES_MSG : summary || SUMMARY_DEFAULT}</p>
-      </article>
-
-      <section className="card">
-        <h2 className="card-title">פירוט בעיות נגישות ({totalIssues})</h2>
-        {totalIssues === 0 ? (
-          <p className="card-hint">{NO_ISSUES_MSG}</p>
-        ) : (
-          <>
-            <p className="card-hint">לחצו על &quot;פרטים&quot; לצפייה בהשפעה, המלצה והסבר WCAG.</p>
-            <IssuesTable issues={issues} />
-          </>
-        )}
+      {/* ── Office-like Accessibility Assistant Panel ────────────────────────── */}
+      <section className="card card--assistant">
+        <AssistantPanel
+          issues={issues}
+          quickFix={quickFix}
+          fileType={fileType}
+        />
       </section>
 
       <div className="btn-group no-print">

@@ -50,7 +50,11 @@ export function collectText(node: unknown): string {
   if (typeof node === 'object') {
     const obj = node as Record<string, unknown>
     if ('t' in obj) return collectText(obj.t)
-    return Object.values(obj).map(collectText).join(' ')
+    // Skip XML attribute values (prefixed @_) — they are not text content
+    return Object.entries(obj)
+      .filter(([k]) => !k.startsWith('@_'))
+      .map(([, v]) => collectText(v))
+      .join('')
   }
   return ''
 }

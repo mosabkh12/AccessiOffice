@@ -55,7 +55,7 @@ const DEMO_XLSX: IssueTemplate[] = [
 ]
 
 export const CRITICAL_ANALYSIS_HE =
-  'סריקה אוטומטית מסייעת לזהות בעיות נגישות נפוצות, אך אינה מחליפה בדיקה אנושית מקצועית. יש לבדוק ידנית את איכות הטקסט החלופי, הקשר התוכן, סדר קריאה מורכב והתאמה מלאה לתקן הישראלי לפני פרסום המסמך.'
+  'סריקה אוטומטית מסייעת לזהות בעיות נגישות נפוצות, אך אינה מחליפה בדיקה אנושית מקצועית מלאה. בדיקות מסוימות, כגון סדר קריאה וסיווג אובייקטים דקורטיביים, הן היוריסטיות ועשויות להיות שונות מהמנוע הפנימי של Microsoft Office. יש לבדוק ידנית את איכות הטקסט החלופי, הקשר התוכן, וסדר הקריאה לפני פרסום המסמך.'
 
 const LIMITED_SCAN_NOTE =
   'הסריקה האוטומטית זיהתה מעט נתונים מבניים. מומלץ לבצע גם בדיקה ידנית.'
@@ -134,7 +134,7 @@ async function analyzeFile(
   }
 }
 
-function logScan(fileName: string, signals: ExtractedSignals, issueCount: number, score: number) {
+function logScan(fileName: string, signals: ExtractedSignals, issueCount: number, qfCount: number, score: number) {
   console.log('[AccessiOffice scan]', {
     fileName,
     fileType: signals.fileType,
@@ -147,6 +147,7 @@ function logScan(fileName: string, signals: ExtractedSignals, issueCount: number
     hyperlinkCount: signals.hyperlinkCount,
     mergedCellCount: signals.mergedCellCount,
     issueCount,
+    quickFixCount: qfCount,
     score,
   })
 }
@@ -164,55 +165,54 @@ export async function generateScanResult(
 
   if (isDemoFile(fileName)) {
     issues = buildDemoIssues(fileType)
-    logScan(fileName, { ...signals, slideCount: fileType === 'pptx' ? 5 : undefined, paragraphCount: fileType === 'docx' ? 20 : undefined, sheetCount: fileType === 'xlsx' ? 2 : undefined }, issues.length, calculateScore(issues))
-  } else {
-    try {
-      const result = await analyzeFile(filePath, fileType, fileSize)
-      signals = result.signals
-      let drafts = dedupeDrafts(result.drafts)
-
-      if (!hasMeaningfulSignals(signals, fileType)) {
-        drafts = buildFallbackDrafts(signals, fileName)
-      }
-
-      issues = drafts.map(buildScanIssue)
-    } catch (err) {
-      console.error('[AccessiOffice scan] error:', (err as Error).message)
-      issues = buildFallbackDrafts(signals, fileName).map(buildScanIssue)
-    }
-
     const score = calculateScore(issues)
-    logScan(fileName, signals, issues.length, score)
-
-    let criticalAnalysis = CRITICAL_ANALYSIS_HE
-    if (issues.length === 0) {
-      criticalAnalysis = `${NO_ISSUES_NOTE} ${CRITICAL_ANALYSIS_HE}`
-    } else if (issues.some((i) => i.id === 'limited-scan-metadata')) {
-      criticalAnalysis = `${LIMITED_SCAN_NOTE} ${CRITICAL_ANALYSIS_HE}`
-    }
-
-    return {
+    logScan(
       fileName,
-      fileType,
-      userType,
-      scanType,
-      score: issues.length === 0 ? 100 : score,
-      summary: buildSummary(issues),
-      issues,
-      criticalAnalysis,
+      { ...signals, slideCount: fileType === 'pptx' ? 5 : undefined, paragraphCount: fileType === 'docx' ? 20 : undefined, sheetCount: fileType === 'xlsx' ? 2 : undefined },
+      issues.length, 0, score,
+    )
+    return {
+      fileName, fileType, userType, scanType,
+      score, summary: buildSummary(issues, []), issues,
+      criticalAnalysis: CRITICAL_ANALYSIS_HE,
     }
   }
 
+  let quickFix: ScanIssue[] = []
+
+  try {
+    const result = await analyzeFile(filePath, fileType, fileSize)
+    signals = result.signals
+    const allDrafts = dedupeDrafts(result.drafts)
+
+    if (!hasMeaningfulSignals(signals, fileType)) {
+      issues = buildFallbackDrafts(signals, fileName).map(buildScanIssue)
+    } else {
+      issues = allDrafts.filter((d) => !d.isQuickFix).map(buildScanIssue)
+      quickFix = allDrafts.filter((d) => d.isQuickFix).map(buildScanIssue)
+    }
+  } catch (err) {
+    console.error('[AccessiOffice scan] error:', (err as Error).message)
+    issues = buildFallbackDrafts(signals, fileName).map(buildScanIssue)
+  }
+
   const score = calculateScore(issues)
+  logScan(fileName, signals, issues.length, quickFix.length, score)
+
+  let criticalAnalysis = CRITICAL_ANALYSIS_HE
+  if (issues.length === 0 && quickFix.length === 0) {
+    criticalAnalysis = `${NO_ISSUES_NOTE} ${CRITICAL_ANALYSIS_HE}`
+  } else if (issues.some((i) => i.id === 'limited-scan-metadata')) {
+    criticalAnalysis = `${LIMITED_SCAN_NOTE} ${CRITICAL_ANALYSIS_HE}`
+  }
+
   return {
-    fileName,
-    fileType,
-    userType,
-    scanType,
-    score,
-    summary: buildSummary(issues),
+    fileName, fileType, userType, scanType,
+    score: issues.length === 0 ? 100 : score,
+    summary: buildSummary(issues, quickFix),
     issues,
-    criticalAnalysis: CRITICAL_ANALYSIS_HE,
+    criticalAnalysis,
+    ...(quickFix.length > 0 ? { quickFix } : {}),
   }
 }
 
