@@ -1,5 +1,11 @@
 import ExcelJS from 'exceljs'
-import type { ExtractedSignals, IssueDraft } from './issue.builder.js'
+import type { ExtractedSignals, IssueDraft } from './scannerShared.js'
+import {
+  CAT_COLOR_CONTRAST,
+  CAT_DOCUMENT_STRUCTURE,
+  CAT_TABLES,
+  OFFICE_TITLES,
+} from './officeCategories.js'
 import { contrastRatio, isGenericSheetName } from './ooxml.utils.js'
 
 function argbToHex(argb?: string): string | null {
@@ -27,7 +33,10 @@ function rowLooksLikeHeader(row: ExcelJS.Row): boolean {
     const v = cell.text?.trim()
     if (v) values.push(v)
   })
-  return values.length >= 2 && values.every((v) => v.length > 0 && v.length < 50)
+  if (values.length < 2) return false
+  const allNumeric = values.every((v) => /^[\d.,%-]+$/.test(v))
+  if (allNumeric) return false
+  return values.every((v) => v.length > 0 && v.length < 80)
 }
 
 export async function analyzeXlsx(
@@ -58,13 +67,14 @@ export async function analyzeXlsx(
       drafts.push({
         id: `sheet-name-${name}`,
         wcagKey: 'headings-labels',
-        title: 'שם גיליון לא תיאורי',
+        title: OFFICE_TITLES.genericSheetName,
         severity: 'Medium',
-        category: 'מבנה',
+        category: CAT_DOCUMENT_STRUCTURE,
         affectedUsers: ['משתמשי קורא מסך'],
         impact: `שם "${name}" אינו מתאר את תוכן הגיליון.`,
-        recommendation: 'שנו לשם תיאורי בעברית או באנגלית.',
+        recommendation: 'שנו לשם תיאורי (למשל "ציוני סטודנטים").',
         location: loc,
+        confidence: 'High',
       })
     }
 
@@ -74,13 +84,14 @@ export async function analyzeXlsx(
       drafts.push({
         id: `merged-${name}`,
         wcagKey: 'info-relationships',
-        title: 'תאים ממוזגים המשמשים לעיצוב',
+        title: OFFICE_TITLES.mergedOrSplitCells,
         severity: 'High',
-        category: 'טבלאות',
+        category: CAT_TABLES,
         affectedUsers: ['משתמשי קורא מסך'],
         impact: `ב"${name}" זוהו ${merges.length} אזורי מיזוג.`,
-        recommendation: 'הימנעו ממיזוג תאים.',
+        recommendation: 'בטלו מיזוג תאים והשתמשו ביישור/גבולות.',
         location: loc,
+        confidence: 'High',
       })
     }
 
@@ -91,7 +102,6 @@ export async function analyzeXlsx(
     const endRow = dim.bottom
     const startCol = dim.left
     const endCol = dim.right
-
     const firstRow = sheet.getRow(startRow)
     const hasDataRows = endRow > startRow
 
@@ -101,13 +111,14 @@ export async function analyzeXlsx(
         drafts.push({
           id: `header-${name}`,
           wcagKey: 'info-relationships',
-          title: 'טבלה ללא שורת כותרות',
+          title: OFFICE_TITLES.missingTableHeader,
           severity: 'High',
-          category: 'טבלאות',
+          category: CAT_TABLES,
           affectedUsers: ['משתמשי קורא מסך'],
-          impact: `ב"${name}" השורה הראשונה אינה כותרת ברורה.`,
-          recommendation: 'הגדירו שורת כותרת.',
+          impact: `ב"${name}" השורה הראשונה אינה כותרת טקסטואלית ברורה.`,
+          recommendation: 'הוסיפו שורת כותרת עם שמות עמודה תיאוריים.',
           location: `${loc} · שורה ${startRow}`,
+          confidence: 'High',
         })
       }
     }
@@ -145,18 +156,18 @@ export async function analyzeXlsx(
       }
     }
 
-    const uniqueEmptyCols = columnsWithoutHeader
-    if (uniqueEmptyCols.length > 0 && hasDataRows) {
+    if (columnsWithoutHeader.length > 0 && hasDataRows) {
       drafts.push({
         id: `columns-no-header-${name}`,
         wcagKey: 'info-relationships',
-        title: 'עמודות ללא כותרת ברורה',
+        title: OFFICE_TITLES.columnsWithoutHeader,
         severity: 'Medium',
-        category: 'טבלאות',
+        category: CAT_TABLES,
         affectedUsers: ['משתמשי קורא מסך'],
-        impact: `ב"${name}" עמודות ${uniqueEmptyCols.join(', ')} ללא כותרת.`,
-        recommendation: 'הוסיפו כותרות עמודה.',
+        impact: `ב"${name}" עמודות ${columnsWithoutHeader.join(', ')} ללא כותרת.`,
+        recommendation: 'הוסיפו כותרות עמודה בשורה הראשונה.',
         location: loc,
+        confidence: 'High',
       })
     }
 
@@ -164,27 +175,29 @@ export async function analyzeXlsx(
       drafts.push({
         id: `empty-cells-${name}`,
         wcagKey: 'info-relationships',
-        title: 'תאים ריקים המשמשים לריווח חזותי',
+        title: OFFICE_TITLES.emptyCellsInRange,
         severity: 'Medium',
-        category: 'מבנה',
+        category: CAT_TABLES,
         affectedUsers: ['משתמשי קורא מסך'],
-        impact: `ב"${name}" ${emptyInside} תאים ריקים בטווח בשימוש.`,
-        recommendation: 'צמצמו ריווח מלאכותי.',
+        impact: `ב"${name}" ${emptyInside} תאים ריקים בתוך טווח הנתונים.`,
+        recommendation: 'צמצמו ריווח מלאכותי בתוך הטבלה.',
         location: loc,
+        confidence: 'High',
       })
     }
 
-    if (contrastIssues >= 3) {
+    if (contrastIssues >= 2) {
       drafts.push({
         id: `contrast-${name}`,
         wcagKey: 'contrast-minimum',
-        title: 'ניגודיות צבעים נמוכה',
+        title: OFFICE_TITLES.hardTextContrast,
         severity: 'High',
-        category: 'תצוגה',
+        category: CAT_COLOR_CONTRAST,
         affectedUsers: ['משתמשים עם לקות ראייה'],
-        impact: `ב"${name}" ${contrastIssues} תאים עם ניגודיות חלשה אפשרית.`,
-        recommendation: 'שפרו צבעי גופן ומילוי.',
+        impact: `ב"${name}" ${contrastIssues} תאים עם ניגודיות מתחת ל-4.5:1.`,
+        recommendation: 'שפרו צבעי גופן ומילוי תאים.',
         location: loc,
+        confidence: 'Low',
       })
     }
   })

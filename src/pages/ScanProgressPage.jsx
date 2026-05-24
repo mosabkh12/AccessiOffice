@@ -14,6 +14,7 @@ export default function ScanProgressPage() {
   const [currentStep, setCurrentStep] = useState(0)
   const [error, setError] = useState('')
   const apiDone = useRef(false)
+  const scanFileKey = useRef(null)
 
   useEffect(() => {
     if (!scanData?.file) {
@@ -21,7 +22,16 @@ export default function ScanProgressPage() {
       return
     }
 
-    if (!apiDone.current && !scanData.results) {
+    const fileKey = `${scanData.file.name}-${scanData.file.size}-${scanData.file.lastModified}`
+    if (fileKey !== scanFileKey.current) {
+      scanFileKey.current = fileKey
+      apiDone.current = false
+      setCurrentStep(0)
+      setError('')
+      setScanData((prev) => (prev ? { ...prev, results: null } : prev))
+    }
+
+    if (!apiDone.current) {
       submitScan({
         file: scanData.file,
         userType: scanData.userType,
@@ -45,7 +55,7 @@ export default function ScanProgressPage() {
       return () => clearTimeout(timer)
     }
 
-    if (scanData.results) {
+    if (scanData.results?.scanId) {
       const timer = setTimeout(() => navigate('/results'), 500)
       return () => clearTimeout(timer)
     }

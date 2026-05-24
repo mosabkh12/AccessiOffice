@@ -18,6 +18,9 @@ app.get('/api/health', (_req, res) => {
 app.use('/api', scanRoutes)
 app.use(scanErrorHandler)
 
+import { PPTX_SCANNER_BUILD } from './services/pptxScanner.service.js'
+
 app.listen(PORT, () => {
   console.log(`AccessiOffice API running on http://localhost:${PORT}`)
+  console.log(`[AccessiOffice] Backend started with PPTX scanner version: ${PPTX_SCANNER_BUILD}`)
 })
