@@ -1,4 +1,5 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+const DEBUG_SCAN = import.meta.env.VITE_ACCESSIOFFICE_DEBUG_SCAN === 'true'
 
 const USER_TYPE_TO_API = {
   author: 'document-author',
@@ -9,8 +10,6 @@ const USER_TYPE_TO_API = {
 const USER_TYPE_FROM_API = Object.fromEntries(
   Object.entries(USER_TYPE_TO_API).map(([k, v]) => [v, k]),
 )
-
-const FILE_LABELS = { docx: 'Word', pptx: 'PowerPoint', xlsx: 'Excel' }
 
 const FALLBACK_NAMES = {
   docx: 'uploaded-document.docx',
@@ -79,6 +78,7 @@ function normalizeIssue(raw) {
 
   return {
     id: raw?.id || `issue-${Math.random().toString(36).slice(2, 9)}`,
+    wcagKey: raw?.wcagKey,
     title: raw?.title || 'בעיית נגישות לא מזוהה',
     severity: severityKey,
     severityLabel: severityKey === 'high' ? 'גבוהה' : severityKey === 'medium' ? 'בינונית' : 'נמוכה',
@@ -95,6 +95,7 @@ function normalizeIssue(raw) {
     location: raw?.location || '—',
     occurrenceCount,
     locations,
+    confidence: raw?.confidence,
   }
 }
 
@@ -102,11 +103,15 @@ export function normalizeScanResponse(api, clientFileName) {
   const userType = USER_TYPE_FROM_API[api.userType] ?? api.userType
   const fileType = api.fileType || getFileType(clientFileName) || 'docx'
   const fileName = safeFileName(api.fileName || clientFileName, fileType)
-  const fileLabel = FILE_LABELS[fileType] ?? 'Office'
 
   const issues = (api.issues || []).map(normalizeIssue)
   const quickFix = (api.quickFix || []).map(normalizeIssue)
   const summary = api.summary || {}
+  const scanDiagnostics = api.scanDiagnostics || api.diagnostics || {}
+  const checkStatuses = Array.isArray(api.checkStatuses) ? api.checkStatuses : []
+  const manualReviewChecks = Array.isArray(api.manualReviewChecks)
+    ? api.manualReviewChecks
+    : checkStatuses.filter((c) => ['manual', 'partial', 'not_checked'].includes(c?.status))
 
   // Resolve occurrence-aware counts with backward-compatible fallbacks
   const totalOccurrences  = summary.totalOccurrences  ?? issues.reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
@@ -148,19 +153,28 @@ export function normalizeScanResponse(api, clientFileName) {
       isQuickFix: true,
     })),
   ]
-  console.log('[NORMALIZED ISSUE COUNTS]', {
-    totalIssueTypes,
-    totalOccurrences,
-    highOccurrences,
-    mediumOccurrences,
-    lowOccurrences,
-    quickFixOccurrences,
-    byTitle: _byTitle,
-  })
-  console.log('[DASHBOARD COUNTS]', { totalOccurrences, totalIssueTypes, highOccurrences, mediumOccurrences, quickFixOccurrences })
-  console.log('[ASSISTANT PANEL COUNTS]', _byTitle.map(i => `${i.title}: ${i.occurrenceCount}${i.isQuickFix ? ' (QF)' : ''}`))
-  console.log('[RESULTS TABLE COUNTS]', issues.map(i => `${i.title}: ${i.occurrenceCount}`))
-  console.log('[REPORT COUNTS]', { totalOccurrences, issues: issues.length, quickFix: quickFix.length })
+  if (DEBUG_SCAN) {
+    console.log('[NORMALIZED ISSUE COUNTS]', {
+      totalIssueTypes,
+      totalOccurrences,
+      highOccurrences,
+      mediumOccurrences,
+      lowOccurrences,
+      quickFixOccurrences,
+      byTitle: _byTitle,
+    })
+    console.log('[DASHBOARD COUNTS]', { totalOccurrences, totalIssueTypes, highOccurrences, mediumOccurrences, quickFixOccurrences })
+    console.log('[ASSISTANT PANEL COUNTS]', _byTitle.map(i => `${i.title}: ${i.occurrenceCount}${i.isQuickFix ? ' (QF)' : ''}`))
+    console.log('[RESULTS TABLE COUNTS]', issues.map(i => `${i.title}: ${i.occurrenceCount}`))
+    console.log('[REPORT COUNTS]', { totalOccurrences, issues: issues.length, quickFix: quickFix.length })
+    console.log('[SCAN DIAGNOSTICS]', {
+      receivedScannerVersion: api.scannerVersion,
+      normalizedScannerVersion: api.scannerVersion,
+      scanDiagnostics,
+      checkStatuses,
+      manualReviewChecks,
+    })
+  }
 
   return {
     fileName,
@@ -189,6 +203,11 @@ export function normalizeScanResponse(api, clientFileName) {
     summary: summaryText,
     issues,
     quickFix,
+    scannerVersion: api.scannerVersion,
+    scanDiagnostics,
+    diagnostics: scanDiagnostics,
+    checkStatuses,
+    manualReviewChecks,
     recommendations: [...new Set(issues.map((i) => i.recommendation).filter(Boolean))],
     criticalAnalysis,
     limitations: [

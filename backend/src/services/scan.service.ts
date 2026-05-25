@@ -1,6 +1,14 @@
 import type { WcagRuleKey } from '../data/wcag.rules.js'
 import { getWcagRule } from '../data/wcag.rules.js'
-import type { FileType, ScanIssue, ScanResult, ScanType, Severity, UserType } from '../types/scan.types.js'
+import type {
+  FileType,
+  ScanCheckStatus,
+  ScanIssue,
+  ScanResult,
+  ScanType,
+  Severity,
+  UserType,
+} from '../types/scan.types.js'
 import { analyzeDocx } from './docxScanner.service.js'
 import {
   buildScanIssue,
@@ -62,6 +70,9 @@ const LIMITED_SCAN_NOTE =
 
 const NO_ISSUES_NOTE =
   'לא נמצאו בעיות נגישות משמעותיות בסריקה האוטומטית. מומלץ לבצע בדיקה ידנית לפני פרסום.'
+
+const DEBUG_SCAN = process.env.ACCESSIOFFICE_DEBUG_SCAN === 'true'
+const PPTX_DIAGNOSTICS_VERSION = 'pptx-diagnostics-v2'
 
 function isDemoFile(fileName: string): boolean {
   const lower = fileName.toLowerCase()
@@ -135,6 +146,7 @@ async function analyzeFile(
 }
 
 function logScan(fileName: string, signals: ExtractedSignals, issueCount: number, qfCount: number, score: number) {
+  if (!DEBUG_SCAN) return
   console.log('[AccessiOffice scan]', {
     fileName,
     fileType: signals.fileType,
@@ -150,6 +162,99 @@ function logScan(fileName: string, signals: ExtractedSignals, issueCount: number
     quickFixCount: qfCount,
     score,
   })
+}
+
+function buildScanDiagnostics(signals: ExtractedSignals): Record<string, unknown> {
+  if (signals.fileType !== 'pptx') return {}
+  return {
+    contrastCheckStatus: signals.contrastCheckStatus ?? 'not_checked',
+    contrastCheckedRuns: signals.contrastCheckedRuns ?? 0,
+    contrastSkippedRuns: signals.contrastSkippedRuns ?? 0,
+    pptxTableCount: signals.pptxTableCount ?? 0,
+    pptxTablesMissingHeaderCount: signals.pptxTablesMissingHeaderCount ?? 0,
+    pptxMergedCellCount: signals.pptxMergedCellCount ?? 0,
+    pptxMediaCount: signals.pptxMediaCount ?? 0,
+    pptxMediaMissingCaptionsCount: signals.pptxMediaMissingCaptionsCount ?? 0,
+  }
+}
+
+function isQuickFixDraft(draft: IssueDraft): boolean {
+  return draft.isQuickFix === true || draft.issueTier === 'quickFix'
+}
+
+function issueOccurrenceCount(issues: ScanIssue[], predicate: (issue: ScanIssue) => boolean): number {
+  return issues.filter(predicate).reduce((sum, issue) => sum + (issue.occurrenceCount ?? 1), 0)
+}
+
+function buildPptxCheckStatuses(signals: ExtractedSignals, issues: ScanIssue[]): ScanCheckStatus[] {
+  if (signals.fileType !== 'pptx') return []
+
+  const contrastCount = issueOccurrenceCount(issues, (i) => i.wcagKey === 'contrast-minimum' || /contrast|ניגודיות/i.test(`${i.id} ${i.title}`))
+  const mediaCaptionCount = issueOccurrenceCount(issues, (i) => i.wcagKey === 'captions-prerecorded' || /media-captions|כתוביות/i.test(`${i.id} ${i.title}`))
+  const tableHeaderCount = issueOccurrenceCount(issues, (i) => /table-header/.test(i.id) || /שורת כותרת|כותרת בטבלה/.test(i.title))
+  const mergedCellsCount = issueOccurrenceCount(issues, (i) => /merged-cells/.test(i.id) || /ממוזגים|מפוצלים/.test(i.title))
+  const readingOrderCount = issueOccurrenceCount(issues, (i) => /reading-order/.test(i.id) || i.wcagKey === 'meaningful-sequence')
+
+  const contrastStatus =
+    contrastCount > 0
+      ? 'failed'
+      : signals.contrastCheckStatus === 'checked'
+        ? 'passed'
+        : signals.contrastCheckStatus === 'partial'
+          ? 'partial'
+          : 'not_checked'
+
+  const statuses: ScanCheckStatus[] = [
+    {
+      id: 'contrast',
+      label: 'ניגודיות טקסט קשה לקריאה',
+      status: contrastStatus,
+      count: contrastCount,
+      note:
+        contrastStatus === 'partial'
+          ? 'נסרקו רק צבעי sRGB מפורשים; צבעי ערכת נושא, ירושה ורקע לא מפורש דורשים בדיקה ידנית.'
+          : contrastStatus === 'not_checked'
+            ? 'לא נמצאו מספיק צבעי טקסט מפורשים לסריקת ניגודיות אמינה.'
+            : undefined,
+    },
+    {
+      id: 'media-captions',
+      label: 'חסרות כתוביות לאודיו/וידאו',
+      status: mediaCaptionCount > 0 ? 'failed' : 'passed',
+      count: mediaCaptionCount,
+      note: mediaCaptionCount === 0 ? `נבדקו קשרי מדיה נפוצים; זוהו ${signals.pptxMediaCount ?? 0} אובייקטי מדיה.` : undefined,
+    },
+    {
+      id: 'table-header',
+      label: 'חסרת שורת כותרת בטבלה',
+      status: tableHeaderCount > 0 ? 'failed' : 'passed',
+      count: tableHeaderCount,
+      note: tableHeaderCount === 0 ? `נבדקו ${signals.pptxTableCount ?? 0} טבלאות DrawingML.` : undefined,
+    },
+    {
+      id: 'merged-cells',
+      label: 'שימוש בתאים ממוזגים או מפוצלים',
+      status: mergedCellsCount > 0 ? 'failed' : 'passed',
+      count: mergedCellsCount,
+      note: mergedCellsCount === 0 ? `נבדקו ${signals.pptxTableCount ?? 0} טבלאות DrawingML.` : undefined,
+    },
+    {
+      id: 'reading-order',
+      label: 'בדיקת סדר קריאה',
+      status: readingOrderCount > 0 ? 'failed' : 'manual',
+      count: readingOrderCount,
+      note: 'בדיקת סדר הקריאה היא היוריסטית; יש לאמת ידנית בחלונית Reading Order של PowerPoint.',
+    },
+    {
+      id: 'restricted-access',
+      label: 'גישה מוגבלת למסמך',
+      status: 'manual',
+      count: 0,
+      note: 'בדיקת הרשאות והגבלות מסמך אינה מיושמת בסורק ה-PPTX.',
+    },
+  ]
+
+  return statuses
 }
 
 export async function generateScanResult(
@@ -188,8 +293,8 @@ export async function generateScanResult(
     if (!hasMeaningfulSignals(signals, fileType)) {
       issues = buildFallbackDrafts(signals, fileName).map(buildScanIssue)
     } else {
-      issues = allDrafts.filter((d) => !d.isQuickFix).map(buildScanIssue)
-      quickFix = allDrafts.filter((d) => d.isQuickFix).map(buildScanIssue)
+      issues = allDrafts.filter((d) => !isQuickFixDraft(d)).map(buildScanIssue)
+      quickFix = allDrafts.filter(isQuickFixDraft).map(buildScanIssue)
     }
   } catch (err) {
     console.error('[AccessiOffice scan] error:', (err as Error).message)
@@ -198,6 +303,20 @@ export async function generateScanResult(
 
   const score = calculateScore(issues)
   logScan(fileName, signals, issues.length, quickFix.length, score)
+  const checkStatuses = buildPptxCheckStatuses(signals, issues)
+  const manualReviewChecks = checkStatuses.filter((c) => c.status === 'manual' || c.status === 'partial' || c.status === 'not_checked')
+  const scanDiagnostics = buildScanDiagnostics(signals)
+
+  if (DEBUG_SCAN && fileType === 'pptx') {
+    console.log('[AccessiOffice PPTX diagnostics response]', {
+      scannerVersion: PPTX_DIAGNOSTICS_VERSION,
+      issueCount: issues.reduce((sum, issue) => sum + (issue.occurrenceCount ?? 1), 0),
+      contrastCheckStatus: scanDiagnostics.contrastCheckStatus,
+      tableStatus: checkStatuses.filter((c) => c.id === 'table-header' || c.id === 'merged-cells'),
+      mediaStatus: checkStatuses.find((c) => c.id === 'media-captions'),
+      checkStatuses,
+    })
+  }
 
   let criticalAnalysis = CRITICAL_ANALYSIS_HE
   if (issues.length === 0 && quickFix.length === 0) {
@@ -213,6 +332,12 @@ export async function generateScanResult(
     issues,
     criticalAnalysis,
     ...(quickFix.length > 0 ? { quickFix } : {}),
+    ...(fileType === 'pptx' ? { scannerVersion: PPTX_DIAGNOSTICS_VERSION } : {}),
+    ...(fileType === 'pptx' && DEBUG_SCAN ? { debugMarker: 'API-SCAN-RESPONSE-V2-ACTIVE' } : {}),
+    ...(fileType === 'pptx' ? { diagnostics: scanDiagnostics } : {}),
+    scanDiagnostics,
+    ...(checkStatuses.length > 0 ? { checkStatuses } : {}),
+    ...(manualReviewChecks.length > 0 ? { manualReviewChecks } : {}),
   }
 }
 

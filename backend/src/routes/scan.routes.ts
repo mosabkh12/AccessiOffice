@@ -11,9 +11,11 @@ import {
   parseUserType,
 } from '../services/scan.service.js'
 import { resolveDisplayFileName } from '../utils/filename.js'
+import type { ScanResult } from '../types/scan.types.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const uploadsDir = path.join(__dirname, '../../uploads')
+const DEBUG_SCAN = process.env.ACCESSIOFFICE_DEBUG_SCAN === 'true'
 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true })
@@ -41,6 +43,22 @@ const upload = multer({
 })
 
 const router = Router()
+const PPTX_RESPONSE_VERSION = 'pptx-diagnostics-v2'
+const PPTX_RESPONSE_DEBUG_MARKER = 'API-SCAN-RESPONSE-V2-ACTIVE'
+
+function ensurePptxDiagnosticsResponse(result: ScanResult): ScanResult {
+  if (result.fileType !== 'pptx') return result
+  const diagnostics = result.scanDiagnostics ?? result.diagnostics ?? {}
+  return {
+    ...result,
+    scannerVersion: PPTX_RESPONSE_VERSION,
+    ...(DEBUG_SCAN ? { debugMarker: PPTX_RESPONSE_DEBUG_MARKER } : {}),
+    diagnostics,
+    scanDiagnostics: diagnostics,
+    checkStatuses: result.checkStatuses ?? [],
+    manualReviewChecks: result.manualReviewChecks ?? [],
+  }
+}
 
 router.post('/scan', upload.single('file'), async (req, res) => {
   const uploaded = req.file
@@ -81,20 +99,22 @@ router.post('/scan', upload.single('file'), async (req, res) => {
   )
   try {
     const fileSize = fs.statSync(uploaded.path).size
-    const fileBuffer = fs.readFileSync(uploaded.path)
-    const debugFileHash = crypto.createHash('sha1').update(fileBuffer).digest('hex')
     const scanId = String(Date.now())
     const ext = path.extname(uploaded.originalname).toLowerCase()
 
-    console.log('[SCAN REQUEST]', {
-      originalFilename: uploaded.originalname,
-      displayFileName: displayName,
-      savedPath: uploaded.path,
-      fileSize,
-      extension: ext,
-      timestamp: scanId,
-      debugFileHash,
-    })
+    if (DEBUG_SCAN) {
+      const fileBuffer = fs.readFileSync(uploaded.path)
+      const debugFileHash = crypto.createHash('sha1').update(fileBuffer).digest('hex')
+      console.log('[SCAN REQUEST]', {
+        originalFilename: uploaded.originalname,
+        displayFileName: displayName,
+        savedPath: uploaded.path,
+        fileSize,
+        extension: ext,
+        timestamp: scanId,
+        debugFileHash,
+      })
+    }
 
     const result = await generateScanResult(
       uploaded.path,
@@ -104,8 +124,9 @@ router.post('/scan', upload.single('file'), async (req, res) => {
       scanType,
       fileSize,
     )
+    const responseBody = ensurePptxDiagnosticsResponse(result)
     cleanup(uploaded.path)
-    res.json(result)
+    res.json(responseBody)
   } catch {
     cleanup(uploaded.path)
     res.status(500).json({ error: 'Failed to analyze the uploaded file.' })

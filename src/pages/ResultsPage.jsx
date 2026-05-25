@@ -12,6 +12,7 @@ const USER_LABELS = {
 }
 const SCAN_LABELS  = { basic: 'סריקה בסיסית', full: 'סריקה מלאה' }
 const FILE_LABELS  = { docx: 'Word', pptx: 'PowerPoint', xlsx: 'Excel' }
+const DEBUG_SCAN = import.meta.env.VITE_ACCESSIOFFICE_DEBUG_SCAN === 'true'
 
 export default function ResultsPage() {
   const navigate = useNavigate()
@@ -33,6 +34,9 @@ export default function ResultsPage() {
     quickFixOccurrences,
     issues,
     quickFix,
+    scanDiagnostics,
+    checkStatuses,
+    scannerVersion,
     fileName,
     fileType,
     userType,
@@ -40,15 +44,20 @@ export default function ResultsPage() {
   } = results
 
   // All counts flow from the same normalized issues array — never computed separately
-  console.log('[RESULTS PAGE RENDER]', {
-    totalOccurrences,
-    totalIssueTypes,
-    highOccurrences,
-    mediumOccurrences,
-    quickFixOccurrences,
-    issueRows: issues.map(i => `${i.title}: ${i.occurrenceCount}`),
-    quickFixRows: quickFix.map(i => `${i.title}: ${i.occurrenceCount}`),
-  })
+  if (DEBUG_SCAN) {
+    console.log('[RESULTS PAGE RENDER]', {
+      totalOccurrences,
+      totalIssueTypes,
+      highOccurrences,
+      mediumOccurrences,
+      quickFixOccurrences,
+      issueRows: issues.map(i => `${i.title}: ${i.occurrenceCount}`),
+      quickFixRows: quickFix.map(i => `${i.title}: ${i.occurrenceCount}`),
+      scannerVersion,
+      scanDiagnostics,
+      checkStatuses,
+    })
+  }
 
   return (
     <div className="page page-results">
@@ -100,6 +109,9 @@ export default function ResultsPage() {
           issues={issues}
           quickFix={quickFix}
           fileType={fileType}
+          scanDiagnostics={scanDiagnostics}
+          checkStatuses={checkStatuses}
+          scannerVersion={scannerVersion}
         />
       </section>
 

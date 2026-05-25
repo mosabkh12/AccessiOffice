@@ -89,8 +89,8 @@ export default function IssuesTable({ issues, variant = 'interactive' }) {
   if (variant === 'report') {
     return (
       <div className="report-issues-grid">
-        {issues.map((issue) => (
-          <IssueReportCard key={issue.id} issue={issue} />
+        {issues.map((issue, index) => (
+          <IssueReportCard key={`${issue.id}-${issue.location}-${index}`} issue={issue} />
         ))}
       </div>
     )
@@ -111,10 +111,10 @@ export default function IssuesTable({ issues, variant = 'interactive' }) {
           <span role="columnheader">פעולה</span>
         </div>
 
-        {issues.map((issue) => {
+        {issues.map((issue, index) => {
           const isOpen = expandedId === issue.id
           return (
-            <article key={issue.id} className="issue-row-wrap">
+            <article key={`${issue.id}-${issue.location}-${index}`} className="issue-row-wrap">
               <div className="issue-row" role="row">
                 <span className="issue-title" role="cell">
                   {issue.title}

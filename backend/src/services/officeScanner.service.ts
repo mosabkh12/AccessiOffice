@@ -11,6 +11,8 @@ import {
 } from './scannerShared.js'
 import type { ScanIssue } from '../types/scan.types.js'
 
+const DEBUG_SCAN = process.env.ACCESSIOFFICE_DEBUG_SCAN === 'true'
+
 export interface OfficeScanResult {
   issues: ScanIssue[]
   signals: ExtractedSignals
@@ -55,6 +57,7 @@ export function logScanSummary(
   issueCount: number,
   score: number,
 ): void {
+  if (!DEBUG_SCAN) return
   const base = {
     fileName,
     fileType: signals.fileType,

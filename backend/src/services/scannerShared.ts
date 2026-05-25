@@ -42,6 +42,14 @@ export interface ExtractedSignals {
   missingAltCount?: number
   decorativeCandidateCount?: number
   readingOrderRiskSlides?: number[]
+  contrastCheckStatus?: 'checked' | 'partial' | 'not_checked'
+  contrastCheckedRuns?: number
+  contrastSkippedRuns?: number
+  pptxTableCount?: number
+  pptxTablesMissingHeaderCount?: number
+  pptxMergedCellCount?: number
+  pptxMediaCount?: number
+  pptxMediaMissingCaptionsCount?: number
   mainIssueTotal?: number
   quickFixTotal?: number
 }
@@ -50,6 +58,7 @@ export function buildScanIssue(draft: IssueDraft): ScanIssue {
   const wcag = getWcagRule(draft.wcagKey)
   return {
     id: draft.id,
+    wcagKey: draft.wcagKey,
     title: draft.title,
     severity: draft.severity,
     category: draft.category,
@@ -63,7 +72,8 @@ export function buildScanIssue(draft: IssueDraft): ScanIssue {
     location: draft.location,
     ...(draft.occurrenceCount !== undefined ? { occurrenceCount: draft.occurrenceCount } : {}),
     ...(draft.locations ? { locations: draft.locations } : {}),
-    ...(draft.isQuickFix ? { isQuickFix: true as const } : {}),
+    ...(draft.isQuickFix || draft.issueTier === 'quickFix' ? { isQuickFix: true as const } : {}),
+    ...(draft.confidence ? { confidence: draft.confidence } : {}),
   }
 }
 

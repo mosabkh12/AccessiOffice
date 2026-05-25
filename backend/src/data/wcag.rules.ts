@@ -21,6 +21,13 @@ export const WCAG_RULES = {
     explanationHe:
       'טקסט צריך להיות מוצג ביחס ניגודיות מספיק מול הרקע כדי לאפשר קריאה למשתמשים עם לקות ראייה.',
   },
+  'captions-prerecorded': {
+    criterion: '1.2.2 Captions (Prerecorded)',
+    principle: 'Perceivable',
+    level: 'A',
+    explanationHe:
+      'יש לספק כתוביות למדיה מוקלטת הכוללת אודיו כדי שמשתמשים חירשים וכבדי שמיעה יוכלו לקבל את המידע הקולי.',
+  },
   'meaningful-sequence': {
     criterion: '1.3.2 Meaningful Sequence',
     principle: 'Perceivable',

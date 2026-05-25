@@ -5,6 +5,7 @@ export type ScanType = 'basic' | 'full'
 
 export interface ScanIssue {
   id: string
+  wcagKey?: string
   title: string
   severity: Severity
   category: string
@@ -45,6 +46,14 @@ export interface ScanSummary {
   low: number
 }
 
+export interface ScanCheckStatus {
+  id: string
+  label: string
+  status: 'failed' | 'passed' | 'partial' | 'not_checked' | 'manual'
+  count: number
+  note?: string
+}
+
 export interface ScanResult {
   fileName: string
   fileType: FileType
@@ -55,4 +64,10 @@ export interface ScanResult {
   issues: ScanIssue[]
   criticalAnalysis: string
   quickFix?: ScanIssue[]
+  scannerVersion?: string
+  debugMarker?: string
+  diagnostics?: Record<string, unknown>
+  scanDiagnostics?: Record<string, unknown>
+  checkStatuses?: ScanCheckStatus[]
+  manualReviewChecks?: ScanCheckStatus[]
 }

@@ -1098,6 +1098,7 @@ h3 { font-size: 1.15rem; }
 .ap-section { border-top: 1px solid var(--border); }
 .ap-section--qf { background: #f8fafc; }
 .ap-section--passed { background: #f0fdf4; }
+.ap-section--manual { background: #fffbeb; }
 
 .ap-section__label {
   display: flex;
@@ -1139,6 +1140,7 @@ h3 { font-size: 1.15rem; }
 .ap-marker--low    { background: var(--low); }
 .ap-marker--qf     { background: var(--navy); }
 .ap-marker--pass   { background: #22c55e; }
+.ap-marker--manual { background: #f59e0b; }
 
 /* Issue row ---------------------------------------------------------------- */
 .ap-issue { border-bottom: 1px solid var(--border); }
@@ -1237,6 +1239,24 @@ h3 { font-size: 1.15rem; }
 }
 .ap-check-pass:last-child { border-bottom: none; }
 .ap-check-pass__label { font-weight: 500; }
+
+.ap-check-manual {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem 1.25rem;
+  font-size: 0.88rem;
+  color: #92400e;
+  border-bottom: 1px solid #fde68a;
+}
+.ap-check-manual:last-child { border-bottom: none; }
+.ap-check-manual__note {
+  margin-inline-start: auto;
+  font-size: 0.78rem;
+  color: #a16207;
+  line-height: 1.35;
+  max-width: 55%;
+}
 
 /* All pass state */
 .ap-all-pass {

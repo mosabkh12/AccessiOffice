@@ -1,17 +1,19 @@
 import { useState } from 'react'
 
-// ── Known checks per file type (used to infer "passed" status) ────────────────
-// A check is "passed" when no issue in the issues array matches its id prefix.
+// ── Known checks per file type. PPTX uses diagnostics for three-state status.
 
 const CHECKS_BY_TYPE = {
   pptx: [
-    { label: 'חסר טקסט חלופי',        prefixes: ['missing-alt'],      group: 'מדיה ואיורים' },
-    { label: 'שקופית ללא כותרת',       prefixes: ['missing-title'],    group: 'מבנה מסמך' },
-    { label: 'כותרת שקופית כפולה',     prefixes: ['duplicate-title'],  group: 'מבנה מסמך' },
-    { label: 'בדיקת סדר קריאה',       prefixes: ['reading-order'],    group: 'מבנה מסמך' },
-    { label: 'ניגודיות טקסט',          prefixes: ['low-contrast', 'contrast'], group: 'צבע וניגודיות' },
-    { label: 'טבלאות',                  prefixes: ['table'],            group: 'טבלאות' },
-    { label: 'קישורים לא ברורים',      prefixes: ['unclear-link'],     group: 'ניווט' },
+    { id: 'missing-alt', label: 'חסר טקסט חלופי', group: 'מדיה ואיורים' },
+    { id: 'media-captions', label: 'חסרות כתוביות לאודיו/וידאו', group: 'מדיה ואיורים' },
+    { id: 'missing-title', label: 'שקופית ללא כותרת', group: 'מבנה מסמך' },
+    { id: 'duplicate-title', label: 'כותרת שקופית כפולה', group: 'מבנה מסמך' },
+    { id: 'reading-order', label: 'בדיקת סדר קריאה', group: 'מבנה מסמך' },
+    { id: 'contrast', label: 'ניגודיות טקסט קשה לקריאה', group: 'צבע וניגודיות' },
+    { id: 'table-header', label: 'חסרת שורת כותרת בטבלה', group: 'טבלאות' },
+    { id: 'merged-cells', label: 'שימוש בתאים ממוזגים או מפוצלים', group: 'טבלאות' },
+    { id: 'restricted-access', label: 'גישה מוגבלת למסמך', group: 'גישה למסמך', manual: true },
+    { id: 'unclear-link', label: 'קישורים לא ברורים', group: 'ניווט' },
   ],
   docx: [
     { label: 'תמונה ללא טקסט חלופי',   prefixes: ['missing-alt'],      group: 'תוכן' },
@@ -30,7 +32,39 @@ const CHECKS_BY_TYPE = {
 }
 
 function matchesCheck(issue, check) {
-  return check.prefixes.some((p) => issue.id?.startsWith(p))
+  if (check.prefixes) return check.prefixes.some((p) => issue.id?.startsWith(p))
+
+  const id = issue.id || ''
+  const title = issue.title || ''
+  const wcag = issue.wcagKey || issue.wcagCriterion || ''
+  const category = issue.category || ''
+
+  switch (check.id) {
+    case 'contrast':
+      return id.includes('contrast') || wcag.includes('Contrast') || wcag === 'contrast-minimum' || /ניגודיות|contrast/i.test(title) || /ניגודיות|contrast/i.test(category)
+    case 'missing-alt':
+      return id.includes('missing-alt') || title.includes('טקסט חלופי')
+    case 'missing-title':
+      return id.includes('slide-without-title') || id.includes('missing-title') || title.includes('שקופית ללא כותרת')
+    case 'duplicate-title':
+      return id.includes('duplicate-title') || title.includes('כותרת שקופית כפולה')
+    case 'reading-order':
+      return id.includes('reading-order') || title.includes('סדר קריאה')
+    case 'table-header':
+      return id.includes('table-header') || title.includes('שורת כותרת') || title.includes('כותרת בטבלה')
+    case 'merged-cells':
+      return id.includes('merged-cells') || title.includes('ממוזגים') || title.includes('מפוצלים')
+    case 'media-captions':
+      return id.includes('media-captions') || title.includes('כתוביות') || wcag.includes('Captions')
+    case 'unclear-link':
+      return id.includes('unclear-link') || title.includes('קישור לא ברור') || title.includes('קישורים לא ברורים')
+    default:
+      return false
+  }
+}
+
+function issueCount(issues) {
+  return issues.reduce((sum, issue) => sum + (issue.occurrenceCount ?? 1), 0)
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -109,9 +143,26 @@ function PassedRow({ label }) {
   )
 }
 
+function ManualReviewRow({ label, note }) {
+  return (
+    <div className="ap-check-manual">
+      <span className="ap-marker ap-marker--manual" aria-hidden="true" />
+      <span className="ap-check-pass__label">{label}</span>
+      {note && <span className="ap-check-manual__note">{note}</span>}
+    </div>
+  )
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export default function AssistantPanel({ issues = [], quickFix = [], fileType = 'pptx' }) {
+export default function AssistantPanel({
+  issues = [],
+  quickFix = [],
+  fileType = 'pptx',
+  scanDiagnostics = {},
+  checkStatuses = [],
+  scannerVersion,
+}) {
   const [expanded, setExpanded] = useState(new Set())
 
   function toggle(id) {
@@ -128,13 +179,57 @@ export default function AssistantPanel({ issues = [], quickFix = [], fileType = 
   const mediumOccurrences  = issues.filter((i) => i.severity === 'medium').reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
   const qfOccurrences      = quickFix.reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
 
-  // Passed checks for this file type
   const knownChecks = CHECKS_BY_TYPE[fileType] ?? []
-  const passedChecks = knownChecks.filter(
-    (check) => !issues.some((issue) => matchesCheck(issue, check))
-  )
+  const backendStatusById = new Map((checkStatuses || []).map((check) => [check.id, check]))
+  const checkResults = knownChecks.map((check) => {
+    const matches = issues.filter((issue) => matchesCheck(issue, check))
+    const backendStatus = backendStatusById.get(check.id)
+    let status = matches.length > 0 ? 'issue' : backendStatus?.status ?? (check.manual ? 'manual' : 'passed')
+    let note = backendStatus?.note || ''
+    const backendCount = typeof backendStatus?.count === 'number' ? backendStatus.count : undefined
 
-  const noIssues = issues.length === 0 && quickFix.length === 0
+    if (fileType === 'pptx' && check.id === 'contrast' && matches.length === 0) {
+      const contrastStatus = scanDiagnostics?.contrastCheckStatus
+      if (!backendStatus && contrastStatus !== 'checked') {
+        status = 'manual'
+        note =
+          contrastStatus === 'partial'
+            ? 'נסרקו רק צבעי sRGB מפורשים; צבעי ערכת נושא או ירושה דורשים בדיקה ידנית.'
+            : 'לא נמצאו מספיק צבעי טקסט מפורשים לסריקת ניגודיות אוטומטית.'
+      }
+    }
+
+    if (!backendStatus && fileType === 'pptx' && check.id === 'media-captions' && matches.length === 0 && (scanDiagnostics?.pptxMediaCount ?? 0) === 0) {
+      status = 'passed'
+    }
+
+    if (!backendStatus && fileType === 'pptx' && check.id === 'reading-order' && matches.length === 0) {
+      status = 'manual'
+      note = 'סדר הקריאה נבדק בהיוריסטיקה בלבד; בדקו את חלונית Reading Order ב-PowerPoint לפני פרסום.'
+    }
+
+    if (!backendStatus && fileType === 'pptx' && check.id === 'restricted-access') {
+      status = 'manual'
+      note = 'בדיקת הרשאות והגבלות מסמך אינה מיושמת בסורק ה-PPTX.'
+    }
+
+    return { ...check, matches, count: backendCount ?? issueCount(matches), status, note }
+  })
+
+  const passedChecks = checkResults.filter((check) => check.status === 'passed')
+  const manualChecks = checkResults.filter((check) => check.status === 'manual')
+  const partialChecks = checkResults.filter((check) => check.status === 'partial' || check.status === 'not_checked')
+
+  if (import.meta.env.VITE_ACCESSIOFFICE_DEBUG_SCAN === 'true') {
+    console.log('[ASSISTANT PANEL STATES]', {
+      scannerVersion,
+      scanDiagnostics,
+      checkStatuses,
+      states: checkResults.map(({ id, label, status, count }) => ({ id, label, status, count })),
+    })
+  }
+
+  const noIssues = issues.length === 0 && quickFix.length === 0 && manualChecks.length === 0 && partialChecks.length === 0
 
   return (
     <div className="assistant-panel" dir="rtl">
@@ -144,6 +239,8 @@ export default function AssistantPanel({ issues = [], quickFix = [], fileType = 
         <span className="ap-header__subtitle">
           {noIssues
             ? 'כל הבדיקות עברו'
+            : issues.length === 0 && quickFix.length === 0
+              ? 'לא נמצאו בעיות אוטומטיות · יש בדיקות לסקירה ידנית'
             : `${issues.length} סוגי בעיות · ${totalOccurrences} מופעים`}
         </span>
       </div>
@@ -158,9 +255,9 @@ export default function AssistantPanel({ issues = [], quickFix = [], fileType = 
               {mediumOccurrences > 0 && <span className="ap-tally ap-tally--medium">{mediumOccurrences} בינונית</span>}
             </span>
           </div>
-          {issues.map((issue) => (
+          {issues.map((issue, index) => (
             <IssueRow
-              key={issue.id}
+              key={`${issue.id}-${issue.location}-${index}`}
               issue={issue}
               isExpanded={expanded.has(issue.id)}
               onToggle={() => toggle(issue.id)}
@@ -176,9 +273,9 @@ export default function AssistantPanel({ issues = [], quickFix = [], fileType = 
             הצעות Quick Fix
             <span className="ap-tally ap-tally--qf">{qfOccurrences}</span>
           </div>
-          {quickFix.map((issue) => (
+          {quickFix.map((issue, index) => (
             <IssueRow
-              key={issue.id}
+              key={`${issue.id}-${issue.location}-${index}`}
               issue={issue}
               isExpanded={expanded.has(issue.id)}
               onToggle={() => toggle(issue.id)}
@@ -193,7 +290,25 @@ export default function AssistantPanel({ issues = [], quickFix = [], fileType = 
         <section className="ap-section ap-section--passed">
           <div className="ap-section__label">בדיקות שעברו</div>
           {passedChecks.map((check) => (
-            <PassedRow key={check.label} label={check.label} />
+            <PassedRow key={`passed-${check.id ?? check.label}`} label={check.label} />
+          ))}
+        </section>
+      )}
+
+      {manualChecks.length > 0 && (
+        <section className="ap-section ap-section--manual">
+          <div className="ap-section__label">בדיקות שמצריכות סקירה ידנית</div>
+          {manualChecks.map((check) => (
+            <ManualReviewRow key={`manual-${check.id ?? check.label}`} label={check.label} note={check.note} />
+          ))}
+        </section>
+      )}
+
+      {partialChecks.length > 0 && (
+        <section className="ap-section ap-section--manual">
+          <div className="ap-section__label">בדיקות חלקיות או שלא הושלמו</div>
+          {partialChecks.map((check) => (
+            <ManualReviewRow key={`partial-${check.id ?? check.label}`} label={check.label} note={check.note} />
           ))}
         </section>
       )}

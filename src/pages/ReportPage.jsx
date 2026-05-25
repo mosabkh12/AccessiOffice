@@ -42,6 +42,7 @@ export default function ReportPage() {
     quickFixOccurrences,
     recommendations,
     criticalAnalysis,
+    manualReviewChecks,
     totalOccurrences,
     totalIssueTypes,
     totalIssues,
@@ -128,6 +129,23 @@ export default function ReportPage() {
           <h3>פירוט בעיות נגישות ({totalIssues})</h3>
           <IssuesTable issues={issues} variant="report" />
         </section>
+
+        {(manualReviewChecks?.length ?? 0) > 0 && (
+          <section className="report-section">
+            <h3>בדיקות ידניות / חלקיות</h3>
+            <div className="limitations-box">
+              <ul className="report-list">
+                {manualReviewChecks.map((check) => (
+                  <li key={check.id}>
+                    <strong>{check.label}</strong>
+                    {` — ${check.status === 'partial' ? 'בדיקה חלקית' : check.status === 'not_checked' ? 'לא נבדק אוטומטית' : 'נדרשת סקירה ידנית'}`}
+                    {check.note ? `: ${check.note}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </section>
+        )}
 
         {quickFixCount > 0 && (
           <section className="report-section">

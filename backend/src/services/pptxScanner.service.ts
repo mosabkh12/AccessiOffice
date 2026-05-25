@@ -3,23 +3,48 @@ import {
   CAT_COLOR_CONTRAST,
   CAT_DOCUMENT_STRUCTURE,
   CAT_MEDIA,
+  CAT_TABLES,
   OFFICE_TITLES,
 } from './officeCategories.js'
 import {
+  contrastRatio,
   isGenericAltText,
   isMissingAltText,
   isUnclearLink,
   listZipEntries,
-  parseXml,
   ptFromSz,
   readZip,
   readZipEntryText,
   wordCount,
 } from './ooxml.utils.js'
 import type AdmZip from 'adm-zip'
-import { snippet, type AccessibilityState, type ObjectClassification } from './pptxDiagnostics.js'
 
-export const PPTX_SCANNER_BUILD = 'DEBUG-PPTX-V7-OFFICE-COUNTS'
+function snippet(text: string, max = 40): string {
+  const t = text.replace(/\s+/g, ' ').trim()
+  if (t.length <= max) return t
+  return `${t.slice(0, max - 1)}…`
+}
+
+type AccessibilityState =
+  | 'ignoreFromAccessibility'
+  | 'needsAltText'
+  | 'decorativeCandidate'
+  | 'alreadyAccessible'
+
+type ObjectClassification =
+  | 'missing-alt'
+  | 'decorative-candidate'
+  | 'decorative-marked'
+  | 'skipped-not-visual'
+  | 'has-alt'
+  | 'not-counted'
+
+export const PPTX_SCANNER_BUILD = 'pptx-diagnostics-v2'
+
+const DEBUG_SCAN = process.env.ACCESSIOFFICE_DEBUG_SCAN === 'true'
+function scanDebug(label: string, payload?: unknown): void {
+  if (DEBUG_SCAN) console.log(label, payload)
+}
 
 const DECORATIVE_SCORE_THRESHOLD = 4
 const DECORATIVE_SCORE_STRICT = 5
@@ -145,6 +170,14 @@ interface SlideSlideSummary {
   decorativeCandidates: number
   readingOrderScore: number
   readingOrderRisk: boolean
+}
+
+interface PptxContrastResult {
+  count: number
+  usedWhiteFallback: boolean
+  checkedRuns: number
+  skippedRuns: number
+  textRuns: number
 }
 
 function attrFromChunk(tag: string, name: string): string | undefined {
@@ -1084,7 +1117,7 @@ function summarizeSlideClassification(
 }
 
 function logObjectInventory(slideNum: number, inventory: InventoryObject[]): void {
-  console.log('[PPTX OBJECT INVENTORY]', {
+  scanDebug('[PPTX OBJECT INVENTORY]', {
     slideNumber: slideNum,
     objectCount: inventory.length,
     objects: inventory.map((o) => ({
@@ -1196,7 +1229,7 @@ function extractSlideTitle(
     missingTitle: isMissingTitle,
     reason: missingTitleReason,
   }
-  console.log('[PPTX TITLE DEBUG]', debug)
+  scanDebug('[PPTX TITLE DEBUG]', debug)
 
   return {
     slideNum,
@@ -1322,16 +1355,121 @@ function detectFontIssues(xml: string): number {
   return small
 }
 
-/** Disabled: theme/background inference is unreliable; PowerPoint passed contrast on SE-B-8. */
-function detectContrastIssues(_xml: string): number {
-  return 0
+function extractSlideBackgroundColor(xml: string): string | null {
+  const bg = xml.match(/<p:bg\b[\s\S]*?<\/p:bg>/i)?.[0]
+  return bg?.match(/<a:srgbClr\b[^>]*\bval="([A-Fa-f0-9]{6})"/i)?.[1] ?? null
+}
+
+function extractRunTextColor(runXml: string): string | null {
+  const solidFill = runXml.match(/<a:solidFill\b[\s\S]*?<\/a:solidFill>/i)?.[0]
+  return solidFill?.match(/<a:srgbClr\b[^>]*\bval="([A-Fa-f0-9]{6})"/i)?.[1] ?? null
+}
+
+function detectContrastIssues(xml: string): PptxContrastResult {
+  const explicitBg = extractSlideBackgroundColor(xml)
+  const bg = explicitBg ?? 'FFFFFF'
+  let count = 0
+  let checkedRuns = 0
+  let skippedRuns = 0
+  let textRuns = 0
+
+  for (const runMatch of xml.matchAll(/<a:r\b[\s\S]*?<\/a:r>/gi)) {
+    const runXml = runMatch[0]
+    const text = chunkText(runXml)
+    if (!text) continue
+    textRuns++
+
+    const fg = extractRunTextColor(runXml)
+    if (!fg) {
+      skippedRuns++
+      continue
+    }
+
+    const ratio = contrastRatio(fg, bg)
+    if (ratio == null) continue
+    checkedRuns++
+
+    const sz = parseInt(runXml.match(/\bsz="(\d+)"/i)?.[1] ?? '0', 10)
+    const threshold = sz > 0 && ptFromSz(sz) >= 18 ? 3.0 : 4.5
+    if (ratio < threshold) count++
+  }
+
+  return { count, usedWhiteFallback: explicitBg == null, checkedRuns, skippedRuns, textRuns }
+}
+
+interface PptxTableResult {
+  tableCount: number
+  missingHeaderCount: number
+  mergedCellCount: number
+}
+
+function detectTableIssues(xml: string): PptxTableResult {
+  let tableCount = 0
+  let missingHeaderCount = 0
+  let mergedCellCount = 0
+
+  for (const tableMatch of xml.matchAll(/<a:tbl\b[\s\S]*?<\/a:tbl>/gi)) {
+    tableCount++
+    const tableXml = tableMatch[0]
+    const rows = [...tableXml.matchAll(/<a:tr\b[\s\S]*?<\/a:tr>/gi)].map((m) => m[0])
+    const hasFirstRowStyle = /<a:tblPr\b[^>]*\bfirstRow="1"/i.test(tableXml)
+    const firstRowText = rows[0] ? chunkText(rows[0]) : ''
+
+    if (rows.length >= 2 && (!hasFirstRowStyle || !firstRowText)) {
+      missingHeaderCount++
+    }
+
+    for (const cellMatch of tableXml.matchAll(/<a:tc\b[^>]*>/gi)) {
+      const cellTag = cellMatch[0]
+      const gridSpan = parseInt(cellTag.match(/\bgridSpan="(\d+)"/i)?.[1] ?? '1', 10)
+      const rowSpan = parseInt(cellTag.match(/\browSpan="(\d+)"/i)?.[1] ?? '1', 10)
+      if (gridSpan > 1 || rowSpan > 1 || /\b[hv]Merge="1"/i.test(cellTag)) {
+        mergedCellCount++
+      }
+    }
+  }
+
+  return { tableCount, missingHeaderCount, mergedCellCount }
+}
+
+function isMediaTarget(target: string): boolean {
+  return /(?:^|\/)media\/[^/]+\.(?:mp4|m4v|mov|wmv|avi|mp3|m4a|wav|wma|aac)$/i.test(target)
+}
+
+function hasObviousCaptionTrack(xml: string, relMap: Map<string, string>): boolean {
+  if (/(caption|subtitle|transcript|timedText|\.vtt|\.srt|\.ttml)/i.test(xml)) return true
+  return [...relMap.values()].some((target) => /\.(?:vtt|srt|ttml|xml)$/i.test(target) && /caption|subtitle|transcript|timed/i.test(target))
+}
+
+function detectMediaWithoutCaptions(
+  xml: string,
+  relMap: Map<string, string>,
+): { mediaCount: number; missingCaptionsCount: number } {
+  const mediaRelIds = new Set<string>()
+  for (const m of xml.matchAll(/<a:(?:videoFile|audioFile)\b[^>]*\br:(?:link|embed)="([^"]+)"/gi)) {
+    mediaRelIds.add(m[1])
+  }
+  for (const m of xml.matchAll(/\br:(?:link|embed)="([^"]+)"/gi)) {
+    const target = relMap.get(m[1])
+    if (target && isMediaTarget(target)) mediaRelIds.add(m[1])
+  }
+  for (const [id, target] of relMap) {
+    if (isMediaTarget(target) && xml.includes(id)) mediaRelIds.add(id)
+  }
+
+  const hasMediaTag = /<(?:p14:)?media\b|<p:(?:video|audio)\b/i.test(xml)
+  const mediaCount = mediaRelIds.size > 0 ? mediaRelIds.size : hasMediaTag ? 1 : 0
+  return {
+    mediaCount,
+    missingCaptionsCount: mediaCount > 0 && !hasObviousCaptionTrack(xml, relMap) ? mediaCount : 0,
+  }
 }
 
 export function analyzePptx(
   filePath: string,
   fileSize: number,
 ): { drafts: IssueDraft[]; signals: ExtractedSignals } {
-  console.log('[PPTX SCANNER IS RUNNING]', {
+  scanDebug('[PPTX SCANNER IS RUNNING]', {
     build: PPTX_SCANNER_BUILD,
     filePath,
     fileSize,
@@ -1348,8 +1486,21 @@ export function analyzePptx(
   const readingOrderRiskSlides: number[] = []
   const missingAltLocations: string[] = []
   const decorativeCandidateLocations: string[] = []
+  const contrastIssueLocations: string[] = []
+  const tableHeaderLocations: string[] = []
+  const mergedCellLocations: string[] = []
+  const mediaCaptionLocations: string[] = []
   let missingAltCount = 0
   let decorativeCandidateCount = 0
+  let contrastIssues = 0
+  let contrastCheckedRuns = 0
+  let contrastSkippedRuns = 0
+  let contrastTextRuns = 0
+  let pptxTableCount = 0
+  let pptxTablesMissingHeaderCount = 0
+  let pptxMergedCellCount = 0
+  let pptxMediaCount = 0
+  let pptxMediaMissingCaptionsCount = 0
 
   const slideTitles: SlideTitleInfo[] = []
   const inventorySummaries: SlideSlideSummary[] = []
@@ -1380,8 +1531,8 @@ export function analyzePptx(
       readingOrder.risk,
     )
     classificationSummaries.push(slideClass)
-    console.log('[ACCESSIBILITY OBJECT CLASSIFICATION]', slideClass)
-    console.log('[OBJECT CLASSIFICATION SUMMARY]', slideClass)
+    scanDebug('[ACCESSIBILITY OBJECT CLASSIFICATION]', slideClass)
+    scanDebug('[OBJECT CLASSIFICATION SUMMARY]', slideClass)
 
     let slideMissingAlt = 0
     let slideDecorative = 0
@@ -1458,9 +1609,9 @@ export function analyzePptx(
         severity: 'Medium',
         category: CAT_DOCUMENT_STRUCTURE,
         affectedUsers: ['משתמשי קורא מסך'],
-        impact: `רכיבים: ${readingOrder.objectCount}, תיבות טקסט: ${readingOrder.textBoxCount}, תמונות: ${readingOrder.pictureCount}, צורות מותאמות: ${readingOrder.customShapeCount}. מומלץ לבדוק סדר קריאה.`,
+        impact: `בשקופית ${slideNum}: זוהו ${readingOrder.objectCount} רכיבים בסדר XML/חזותי שמצריך סקירה ידנית של סדר הקריאה. זהו סימון היוריסטי ולא כשל ודאי.`,
         recommendation:
-          'בדקו את סדר הקריאה בחלונית Accessibility → Reading Order Pane וודאו שהתוכן נקרא בסדר הגיוני.',
+          'בדקו את סדר הקריאה בחלונית Accessibility → Reading Order Pane ב-PowerPoint וודאו שהתוכן נקרא בסדר הגיוני.',
         location: `שקופית ${slideNum}`,
         confidence: 'Medium',
       })
@@ -1515,7 +1666,88 @@ export function analyzePptx(
       })
     }
 
-    detectContrastIssues(slideXml)
+    const contrastResult = detectContrastIssues(slideXml)
+    slideClass.contrastIssues = contrastResult.count
+    contrastCheckedRuns += contrastResult.checkedRuns
+    contrastSkippedRuns += contrastResult.skippedRuns
+    contrastTextRuns += contrastResult.textRuns
+    if (contrastResult.count >= 1) {
+      contrastIssues += contrastResult.count
+      contrastIssueLocations.push(`שקופית ${slideNum}`)
+      const officeTitles = OFFICE_TITLES as typeof OFFICE_TITLES & { lowContrast?: string }
+      drafts.push({
+        id: `low-contrast-${slideNum}`,
+        wcagKey: 'contrast-minimum',
+        title: officeTitles.lowContrast ?? OFFICE_TITLES.hardTextContrast ?? 'ניגודיות צבעים נמוכה',
+        severity: 'High',
+        category: CAT_COLOR_CONTRAST,
+        affectedUsers: ['משתמשים עם לקות ראייה', 'משתמשים עם עיוורון צבעים'],
+        impact: `בשקופית ${slideNum}: נמצאו ${contrastResult.count} מופעי טקסט עם ניגודיות נמוכה.`,
+        recommendation:
+          'ודאו שלצבע הטקסט יש ניגודיות מספקת מול הרקע: לפחות 4.5:1 לטקסט רגיל ולפחות 3:1 לטקסט גדול.' +
+          (contrastResult.usedWhiteFallback ? ' בהיעדר צבע רקע מפורש לשקופית, הבדיקה השתמשה ברקע לבן.' : ''),
+        location: `שקופית ${slideNum}`,
+        occurrenceCount: contrastResult.count,
+        confidence: 'Medium',
+      })
+    }
+
+    const tableResult = detectTableIssues(slideXml)
+    pptxTableCount += tableResult.tableCount
+    pptxTablesMissingHeaderCount += tableResult.missingHeaderCount
+    pptxMergedCellCount += tableResult.mergedCellCount
+    if (tableResult.missingHeaderCount >= 1) {
+      tableHeaderLocations.push(`שקופית ${slideNum}`)
+      drafts.push({
+        id: `pptx-table-header-${slideNum}`,
+        wcagKey: 'info-relationships',
+        title: OFFICE_TITLES.missingTableHeader,
+        severity: 'Medium',
+        category: CAT_TABLES,
+        affectedUsers: ['משתמשי קורא מסך'],
+        impact: `בשקופית ${slideNum}: נמצאו ${tableResult.missingHeaderCount} טבלאות ללא שורת כותרת מפורשת.`,
+        recommendation: 'ב-PowerPoint סמנו שורת כותרת לטבלה והשתמשו במבנה טבלה ברור במקום עיצוב חזותי בלבד.',
+        location: `שקופית ${slideNum}`,
+        occurrenceCount: tableResult.missingHeaderCount,
+        confidence: 'Medium',
+      })
+    }
+    if (tableResult.mergedCellCount >= 1) {
+      mergedCellLocations.push(`שקופית ${slideNum}`)
+      drafts.push({
+        id: `pptx-merged-cells-${slideNum}`,
+        wcagKey: 'info-relationships',
+        title: OFFICE_TITLES.mergedOrSplitCells,
+        severity: 'Medium',
+        category: CAT_TABLES,
+        affectedUsers: ['משתמשי קורא מסך'],
+        impact: `בשקופית ${slideNum}: נמצאו ${tableResult.mergedCellCount} תאי טבלה ממוזגים או מפוצלים.`,
+        recommendation: 'פשטו את מבנה הטבלה והימנעו ממיזוג או פיצול תאים כאשר הדבר פוגע בהבנת הקשרים בטבלה.',
+        location: `שקופית ${slideNum}`,
+        occurrenceCount: tableResult.mergedCellCount,
+        confidence: 'Medium',
+      })
+    }
+
+    const mediaResult = detectMediaWithoutCaptions(slideXml, relMap)
+    pptxMediaCount += mediaResult.mediaCount
+    if (mediaResult.missingCaptionsCount >= 1) {
+      pptxMediaMissingCaptionsCount += mediaResult.missingCaptionsCount
+      mediaCaptionLocations.push(`שקופית ${slideNum}`)
+      drafts.push({
+        id: `pptx-media-captions-${slideNum}`,
+        wcagKey: 'captions-prerecorded',
+        title: 'חסרות כתוביות לאודיו או וידאו',
+        severity: 'High',
+        category: CAT_MEDIA,
+        affectedUsers: ['משתמשים חירשים וכבדי שמיעה'],
+        impact: `בשקופית ${slideNum}: נמצא אובייקט אודיו או וידאו ללא רצועת כתוביות מזוהה.`,
+        recommendation: 'הוסיפו כתוביות או תמלול למדיה מוקלטת, ובדקו ידנית שהכתוביות זמינות בזמן ההצגה.',
+        location: `שקופית ${slideNum}`,
+        occurrenceCount: mediaResult.missingCaptionsCount,
+        confidence: 'Medium',
+      })
+    }
   }
 
   const titleGroups = new Map<string, number[]>()
@@ -1549,7 +1781,7 @@ export function analyzePptx(
       const sum = inventorySummaries.find((s) => s.slide === slideNum)
       if (sum) sum.duplicateTitle = true
     }
-    console.log('[PPTX duplicate-title group]', { normalized: snippet(norm, 40), slides: sorted })
+    scanDebug('[PPTX duplicate-title group]', { normalized: snippet(norm, 40), slides: sorted })
   }
 
   const comparison = {
@@ -1570,15 +1802,43 @@ export function analyzePptx(
       count: decorativeCandidateCount,
       locations: [...decorativeCandidateLocations],
     },
+    contrastIssues: {
+      count: contrastIssues,
+      locations: [...contrastIssueLocations],
+    },
+    tableHeaders: {
+      count: pptxTablesMissingHeaderCount,
+      locations: [...tableHeaderLocations],
+    },
+    mergedCells: {
+      count: pptxMergedCellCount,
+      locations: [...mergedCellLocations],
+    },
+    mediaCaptions: {
+      count: pptxMediaMissingCaptionsCount,
+      locations: [...mediaCaptionLocations],
+    },
   }
 
-  const contrastIssues = 0
+  const tableIssues = pptxTablesMissingHeaderCount + pptxMergedCellCount
+  const mediaIssues = pptxMediaMissingCaptionsCount
+  const contrastCheckStatus =
+    contrastCheckedRuns > 0 && contrastSkippedRuns === 0
+      ? 'checked'
+      : contrastCheckedRuns > 0
+        ? 'partial'
+        : contrastTextRuns > 0
+          ? 'not_checked'
+          : 'not_checked'
+
   const mainIssueTotal =
     missingAltCount +
     missingTitleSlides.length +
     duplicateTitleSlides.length +
     readingOrderRiskSlides.length +
-    contrastIssues
+    contrastIssues +
+    tableIssues +
+    mediaIssues
 
   const officeLikeCounts = {
     missingAltText: missingAltCount,
@@ -1587,16 +1847,17 @@ export function analyzePptx(
     duplicateSlideTitle: duplicateTitleSlides.length,
     readingOrder: readingOrderRiskSlides.length,
     contrastIssues,
-    tableIssues: 0,
+    tableIssues,
+    mediaIssues,
     mainIssueTotal,
     quickFixTotal: decorativeCandidateCount,
   }
 
-  console.log('[OFFICE-LIKE COUNTS]', officeLikeCounts)
-  console.log('[POWERPOINT-LIKE COUNTS]', officeLikeCounts)
-  console.log('[POWERPOINT COMPARISON SUMMARY]', comparison)
-  console.log('[PPTX OBJECT INVENTORY SUMMARY]', inventorySummaries)
-  console.log('[ACCESSIBILITY CLASSIFICATION DECK SUMMARY]', {
+  scanDebug('[OFFICE-LIKE COUNTS]', officeLikeCounts)
+  scanDebug('[POWERPOINT-LIKE COUNTS]', officeLikeCounts)
+  scanDebug('[POWERPOINT COMPARISON SUMMARY]', comparison)
+  scanDebug('[PPTX OBJECT INVENTORY SUMMARY]', inventorySummaries)
+  scanDebug('[ACCESSIBILITY CLASSIFICATION DECK SUMMARY]', {
     mainIssueTotal,
     quickFixTotal: decorativeCandidateCount,
     groupChildrenSkippedTotal: classificationSummaries.reduce((s, c) => s + c.groupChildrenSkipped, 0),
@@ -1608,6 +1869,8 @@ export function analyzePptx(
     fileSize,
     slideCount: slidePaths.length,
     imageCount: inventorySummaries.reduce((s, i) => s + i.imageLikeObjects, 0),
+    tableCount: pptxTableCount,
+    mergedCellCount: pptxMergedCellCount,
     missingTitleSlides,
     titleCount: slideTitles.filter((t) => t.normalizedTitle).length,
     duplicateTitleSlides,
@@ -1615,6 +1878,14 @@ export function analyzePptx(
     missingAltCount,
     decorativeCandidateCount,
     readingOrderRiskSlides,
+    contrastCheckStatus,
+    contrastCheckedRuns,
+    contrastSkippedRuns,
+    pptxTableCount,
+    pptxTablesMissingHeaderCount,
+    pptxMergedCellCount,
+    pptxMediaCount,
+    pptxMediaMissingCaptionsCount,
     mainIssueTotal,
     quickFixTotal: decorativeCandidateCount,
   }
