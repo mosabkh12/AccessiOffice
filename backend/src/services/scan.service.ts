@@ -1,7 +1,7 @@
 import type { WcagRuleKey } from '../data/wcag.rules.js'
 import { getWcagRule } from '../data/wcag.rules.js'
 import type { FileType, ScanIssue, ScanResult, ScanType, Severity, UserType } from '../types/scan.types.js'
-import { analyzeDocx } from './analyzers/docx.analyzer.js'
+import { analyzeDocx } from './docxScanner.service.js'
 import {
   buildScanIssue,
   buildSummary,
@@ -9,9 +9,9 @@ import {
   dedupeDrafts,
   type ExtractedSignals,
   type IssueDraft,
-} from './analyzers/issue.builder.js'
-import { analyzePptx } from './analyzers/pptx.analyzer.js'
-import { analyzeXlsx } from './analyzers/xlsx.analyzer.js'
+} from './scannerShared.js'
+import { analyzePptx } from './pptxScanner.service.js'
+import { analyzeXlsx } from './xlsxScanner.service.js'
 
 interface IssueTemplate {
   id: string

@@ -47,19 +47,21 @@ export default function ScanProgressPage() {
     }
   }, [scanData, navigate, setScanData])
 
+  // Navigate only after steps reach 100% AND results are ready
+  useEffect(() => {
+    if (error || !scanData?.results || currentStep < SCAN_STEPS.length) return
+    const timer = setTimeout(() => navigate('/results'), 600)
+    return () => clearTimeout(timer)
+  }, [currentStep, scanData?.results, error, navigate])
+
+  // Keep animating steps until all done (continue even after results arrive)
   useEffect(() => {
     if (error || !scanData?.fileName) return
-
     if (currentStep < SCAN_STEPS.length) {
       const timer = setTimeout(() => setCurrentStep((s) => s + 1), STEP_DELAY)
       return () => clearTimeout(timer)
     }
-
-    if (scanData.results?.scanId) {
-      const timer = setTimeout(() => navigate('/results'), 500)
-      return () => clearTimeout(timer)
-    }
-  }, [currentStep, scanData, error, navigate])
+  }, [currentStep, scanData?.fileName, error])
 
   if (!scanData?.fileName) return null
 

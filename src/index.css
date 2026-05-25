@@ -1317,8 +1317,17 @@ h3 { font-size: 1.15rem; }
     display: none !important;
   }
 
+  /* Disable opacity animation so content is visible when print dialog opens */
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    opacity: 1 !important;
+  }
+
   .layout-main { padding: 0; max-width: 100%; }
   body { background: #fff; font-size: 11pt; }
   .card, .report-issue-card { box-shadow: none; page-break-inside: avoid; }
+  .report-document { max-width: 100%; width: 100%; }
+  .report-section { page-break-inside: avoid; }
   .issues-table-head { background: var(--navy-mid) !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
 }

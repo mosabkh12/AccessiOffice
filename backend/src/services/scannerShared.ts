@@ -1,6 +1,6 @@
-import type { WcagRuleKey } from '../../data/wcag.rules.js'
-import { getWcagRule } from '../../data/wcag.rules.js'
-import type { ScanIssue, ScanSummary, Severity } from '../../types/scan.types.js'
+import type { WcagRuleKey } from '../data/wcag.rules.js'
+import { getWcagRule } from '../data/wcag.rules.js'
+import type { ScanIssue, ScanSummary, Severity } from '../types/scan.types.js'
 
 export interface IssueDraft {
   id: string
@@ -17,6 +17,8 @@ export interface IssueDraft {
   /** Per-occurrence locations for expanded display */
   locations?: string[]
   isQuickFix?: boolean
+  confidence?: string
+  issueTier?: string
 }
 
 export interface ExtractedSignals {
@@ -33,6 +35,15 @@ export interface ExtractedSignals {
   missingTitleSlides?: number[]
   emptyParagraphCount?: number
   quickFixCount?: number
+  // PPTX-specific diagnostic fields
+  titleCount?: number
+  duplicateTitleSlides?: number[]
+  imageLikeObjectCount?: number
+  missingAltCount?: number
+  decorativeCandidateCount?: number
+  readingOrderRiskSlides?: number[]
+  mainIssueTotal?: number
+  quickFixTotal?: number
 }
 
 export function buildScanIssue(draft: IssueDraft): ScanIssue {
@@ -72,7 +83,8 @@ export function calculateScore(issues: ScanIssue[]): number {
     Low:    { rate: 1, cap: 8  },
   } as const
   const penalty = issues.reduce((sum, issue) => {
-    const w = weights[issue.severity]
+    const w = weights[issue.severity as keyof typeof weights]
+    if (!w) return sum
     return sum + Math.min(w.cap, occ(issue) * w.rate)
   }, 0)
   return Math.max(0, Math.min(100, 100 - penalty))

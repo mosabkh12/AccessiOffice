@@ -44,13 +44,14 @@ export default function ReportPage() {
     criticalAnalysis,
     totalOccurrences,
     totalIssueTypes,
+    totalIssues,
     highOccurrences,
     mediumOccurrences,
     lowOccurrences,
   } = results
 
   function handlePrint() {
-    window.print()
+    requestAnimationFrame(() => window.print())
   }
 
   return (

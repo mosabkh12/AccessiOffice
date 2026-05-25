@@ -491,7 +491,6 @@ function isTextReadableObject(
   if (obj.isSlideNumberPlaceholder || obj.isDatePlaceholder) return true
   if (obj.objectKind === 'textBox') return true
   if (obj.isPlaceholder && obj.hasText) return true
-  if (wordCount(fullText) >= 3 && !isVisualBannerShape(obj, fullText, chunkXml)) return true
   return false
 }
 
@@ -613,22 +612,11 @@ function classifyAccessibilityObject(
     }
   }
 
-  if (
-    isVisualBannerShape(obj, fullText, chunkXml) &&
-    !obj.isTitlePlaceholder &&
-    !obj.isBodyPlaceholder
-  ) {
-    return {
-      state: 'needsAltText',
-      reason: 'visual banner/card without meaningful alt',
-      decorativeScore,
-      meaningfulVisualScore,
-    }
-  }
-
+  // Plain geometric shapes (autoshapes, freeforms, connectors) without image content
+  // are NOT flagged by Office's accessibility checker — only pictures/charts/media need alt text.
   return {
     state: 'ignoreFromAccessibility',
-    reason: 'not a visual-only object requiring alt',
+    reason: 'shape without image content — not flagged by Office checker',
     decorativeScore,
     meaningfulVisualScore,
   }
@@ -971,7 +959,11 @@ function filterReadingOrderObjects(
   }
 
   const topLevelSingles = built.filter((o, i) => !raws[i].inGroup && raws[i].tag !== 'grpSp')
-  const topLevelGrpFromRaws = built.filter((o, i) => raws[i].tag === 'grpSp' && !raws[i].inGroup)
+  // Only include top-level grpSp from raws if they are NOT already represented in groupXmlToObject
+  // (groups with inGroup children are already synthesized there — including them again causes duplication)
+  const topLevelGrpFromRaws = built.filter(
+    (o, i) => raws[i].tag === 'grpSp' && !raws[i].inGroup && !groupXmlToObject.has(raws[i].xml),
+  )
   const merged = [...topLevelSingles, ...topLevelGrpFromRaws, ...groupXmlToObject.values()]
   const inventory = merged.map((o, i) => ({ ...o, index: i + 1 }))
   return { inventory, groupChildrenSkipped }

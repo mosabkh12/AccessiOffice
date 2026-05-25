@@ -103,7 +103,6 @@ router.post('/scan', upload.single('file'), async (req, res) => {
       userType,
       scanType,
       fileSize,
-      { scanId, debugFileHash },
     )
     cleanup(uploaded.path)
     res.json(result)
