@@ -52,6 +52,18 @@ export interface ExtractedSignals {
   pptxMediaMissingCaptionsCount?: number
   mainIssueTotal?: number
   quickFixTotal?: number
+  /** Contrast failures where an explicit slide background color was used (not white fallback) */
+  contrastIssuesWithExplicitBg?: number
+  /** Office-like alt text count: needsAltText objects that pass the conservative template-decoration filter */
+  officeLikeMissingAltCount?: number
+  /** fromLayout objects excluded from officeLikeMissingAltCount (small logos, non-picture accents) */
+  officeLikeAltExcludedLayout?: number
+  /** Office-like slide title: slides missing a real title-placeholder with non-boilerplate text */
+  officeLikeMissingTitleSlides?: number[]
+  /** Slides that DO have a real meaningful title placeholder (office-like passed check) */
+  officeLikeTitleWithRealPlaceholderCount?: number
+  /** Office-like reading order: slides with >= 3 visible content objects (inclusive of placeholders) */
+  officeLikeReadingOrderCount?: number
 }
 
 export function buildScanIssue(draft: IssueDraft): ScanIssue {

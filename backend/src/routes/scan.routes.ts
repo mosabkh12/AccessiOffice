@@ -102,17 +102,18 @@ router.post('/scan', upload.single('file'), async (req, res) => {
     const scanId = String(Date.now())
     const ext = path.extname(uploaded.originalname).toLowerCase()
 
+    // Always compute SHA-256: lets callers verify the scanned file changed after edits.
+    const fileBuffer = fs.readFileSync(uploaded.path)
+    const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex')
+
     if (DEBUG_SCAN) {
-      const fileBuffer = fs.readFileSync(uploaded.path)
-      const debugFileHash = crypto.createHash('sha1').update(fileBuffer).digest('hex')
       console.log('[SCAN REQUEST]', {
         originalFilename: uploaded.originalname,
         displayFileName: displayName,
-        savedPath: uploaded.path,
         fileSize,
         extension: ext,
         timestamp: scanId,
-        debugFileHash,
+        fileHash,
       })
     }
 
@@ -124,7 +125,7 @@ router.post('/scan', upload.single('file'), async (req, res) => {
       scanType,
       fileSize,
     )
-    const responseBody = ensurePptxDiagnosticsResponse(result)
+    const responseBody = { ...ensurePptxDiagnosticsResponse(result), fileHash }
     cleanup(uploaded.path)
     res.json(responseBody)
   } catch {

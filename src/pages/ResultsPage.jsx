@@ -37,11 +37,15 @@ export default function ResultsPage() {
     scanDiagnostics,
     checkStatuses,
     scannerVersion,
+    officeLikeSummary,
+    fileHash,
     fileName,
     fileType,
     userType,
     scanType,
   } = results
+
+  const showOfficeLike = fileType === 'pptx' && !!officeLikeSummary
 
   // All counts flow from the same normalized issues array — never computed separately
   if (DEBUG_SCAN) {
@@ -56,6 +60,18 @@ export default function ResultsPage() {
       scannerVersion,
       scanDiagnostics,
       checkStatuses,
+      fileHash,
+    })
+    console.log('[RESULTS PAGE] Section data sources:', {
+      'Card A (assistant panel)': showOfficeLike
+        ? 'officeLikeSummary — grouped office-like view'
+        : 'issues[] + quickFix[] + checkStatuses[] — standard AssistantPanel',
+      'Card B (detailed findings)': showOfficeLike
+        ? `issues[${issues.length}] + quickFix[${quickFix.length}] — raw WCAG rows`
+        : 'N/A (single panel)',
+      officeLikeSummary: showOfficeLike
+        ? Object.entries(officeLikeSummary).map(([k, v]) => `${k}: ${v.status} (${v.count})`)
+        : null,
     })
   }
 
@@ -103,17 +119,37 @@ export default function ResultsPage() {
         )}
       </section>
 
-      {/* ── Office-like Accessibility Assistant Panel ────────────────────────── */}
+      {/* ── Card A: Office-like Accessibility Assistant ──────────────────────── */}
       <section className="card card--assistant">
+        {showOfficeLike && (
+          <p className="card-section-source">מסייע נגישות — תצוגת PowerPoint</p>
+        )}
         <AssistantPanel
-          issues={issues}
-          quickFix={quickFix}
+          issues={showOfficeLike ? [] : issues}
+          quickFix={showOfficeLike ? [] : quickFix}
           fileType={fileType}
           scanDiagnostics={scanDiagnostics}
           checkStatuses={checkStatuses}
           scannerVersion={scannerVersion}
+          officeLikeSummary={officeLikeSummary}
         />
       </section>
+
+      {/* ── Card B: Detailed WCAG raw findings (PPTX only) ───────────────────── */}
+      {showOfficeLike && (issues.length > 0 || quickFix.length > 0) && (
+        <section className="card card--assistant">
+          <p className="card-section-source">ממצאים מפורטים — ממצאי סריקה WCAG</p>
+          <AssistantPanel
+            issues={issues}
+            quickFix={quickFix}
+            fileType={fileType}
+            scanDiagnostics={scanDiagnostics}
+            checkStatuses={checkStatuses}
+            scannerVersion={scannerVersion}
+            detailedOnly
+          />
+        </section>
+      )}
 
       <div className="btn-group no-print">
         <Button to="/report">צפייה בדוח מלא</Button>

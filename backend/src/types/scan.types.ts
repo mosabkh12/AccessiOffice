@@ -54,6 +54,27 @@ export interface ScanCheckStatus {
   note?: string
 }
 
+export type OfficeLikeSummaryStatus = 'failed' | 'passed' | 'manual' | 'partial' | 'not_checked'
+
+export interface OfficeLikeSummaryItem {
+  label: string
+  status: OfficeLikeSummaryStatus
+  count: number
+  note?: string
+}
+
+export interface OfficeLikeSummary {
+  contrast: OfficeLikeSummaryItem
+  missingAltText: OfficeLikeSummaryItem
+  mediaCaptions: OfficeLikeSummaryItem
+  tableHeader: OfficeLikeSummaryItem
+  mergedCells: OfficeLikeSummaryItem
+  missingSlideTitle: OfficeLikeSummaryItem
+  duplicateSlideTitle: OfficeLikeSummaryItem
+  readingOrder: OfficeLikeSummaryItem
+  restrictedAccess: OfficeLikeSummaryItem
+}
+
 export interface ScanResult {
   fileName: string
   fileType: FileType
@@ -64,10 +85,13 @@ export interface ScanResult {
   issues: ScanIssue[]
   criticalAnalysis: string
   quickFix?: ScanIssue[]
+  /** SHA-256 of uploaded file bytes — changes when the file content changes */
+  fileHash?: string
   scannerVersion?: string
   debugMarker?: string
   diagnostics?: Record<string, unknown>
   scanDiagnostics?: Record<string, unknown>
   checkStatuses?: ScanCheckStatus[]
   manualReviewChecks?: ScanCheckStatus[]
+  officeLikeSummary?: OfficeLikeSummary
 }

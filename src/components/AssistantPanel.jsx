@@ -153,6 +153,46 @@ function ManualReviewRow({ label, note }) {
   )
 }
 
+// ── Office-like check row (used when officeLikeSummary is present) ──────────────
+
+const OFFICE_GROUPS = [
+  { label: 'צבע וניגודיות', keys: ['contrast'] },
+  { label: 'מדיה ואיורים', keys: ['missingAltText', 'mediaCaptions'] },
+  { label: 'טבלאות', keys: ['tableHeader', 'mergedCells'] },
+  { label: 'מבנה מסמך', keys: ['missingSlideTitle', 'duplicateSlideTitle', 'readingOrder'] },
+  { label: 'גישה למסמך', keys: ['restrictedAccess'] },
+]
+
+function OfficeLikeCheckRow({ item }) {
+  if (item.status === 'passed') {
+    return (
+      <div className="ap-check-pass">
+        <span className="ap-marker ap-marker--pass" aria-hidden="true" />
+        <span className="ap-check-pass__label">{item.label}</span>
+      </div>
+    )
+  }
+  if (item.status === 'failed') {
+    return (
+      <div className="ap-check-pass">
+        <span className="ap-marker ap-marker--medium" aria-hidden="true" />
+        <span className="ap-check-pass__label">{item.label}</span>
+        <span className="ap-issue__count ap-issue__count--medium">{item.count}</span>
+      </div>
+    )
+  }
+  // manual / partial / not_checked — show count if > 0, no red coloring
+  return (
+    <div className="ap-check-manual">
+      <span className="ap-marker ap-marker--manual" aria-hidden="true" />
+      <span className="ap-check-pass__label">{item.label}</span>
+      {item.count > 0 && (
+        <span className="ap-issue__count ap-issue__count--medium">{item.count}</span>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function AssistantPanel({
@@ -162,6 +202,8 @@ export default function AssistantPanel({
   scanDiagnostics = {},
   checkStatuses = [],
   scannerVersion,
+  officeLikeSummary = null,
+  detailedOnly = false,
 }) {
   const [expanded, setExpanded] = useState(new Set())
 
@@ -173,11 +215,122 @@ export default function AssistantPanel({
     })
   }
 
+  const qfOccurrences = quickFix.reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
+
+  // ── Detailed-only rendering (Card B — raw WCAG issues + quickFix, no check-status logic) ───
+  if (detailedOnly) {
+    const totalOcc = issues.reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
+    const highOcc  = issues.filter((i) => i.severity === 'high').reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
+    const medOcc   = issues.filter((i) => i.severity === 'medium').reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
+
+    if (issues.length === 0 && quickFix.length === 0) return null
+
+    return (
+      <div className="assistant-panel" dir="rtl">
+        <div className="ap-header">
+          <span className="ap-header__title">ממצאים מפורטים</span>
+          <span className="ap-header__subtitle">
+            {issues.length} סוגי בעיות · {totalOcc} מופעים
+          </span>
+        </div>
+
+        {issues.length > 0 && (
+          <section className="ap-section">
+            <div className="ap-section__label">
+              בעיות נגישות
+              <span className="ap-section__tally">
+                {highOcc > 0 && <span className="ap-tally ap-tally--high">{highOcc} גבוהה</span>}
+                {medOcc  > 0 && <span className="ap-tally ap-tally--medium">{medOcc} בינונית</span>}
+              </span>
+            </div>
+            {issues.map((issue, index) => (
+              <IssueRow
+                key={`${issue.id}-${issue.location}-${index}`}
+                issue={issue}
+                isExpanded={expanded.has(issue.id)}
+                onToggle={() => toggle(issue.id)}
+              />
+            ))}
+          </section>
+        )}
+
+        {quickFix.length > 0 && (
+          <section className="ap-section ap-section--qf">
+            <div className="ap-section__label">
+              הצעות Quick Fix
+              <span className="ap-tally ap-tally--qf">{qfOccurrences}</span>
+            </div>
+            {quickFix.map((issue, index) => (
+              <IssueRow
+                key={`${issue.id}-${issue.location}-${index}`}
+                issue={issue}
+                isExpanded={expanded.has(issue.id)}
+                onToggle={() => toggle(issue.id)}
+                isQuickFix
+              />
+            ))}
+          </section>
+        )}
+      </div>
+    )
+  }
+
+  // ── Office-like rendering when officeLikeSummary is present for PPTX ─────────
+  if (fileType === 'pptx' && officeLikeSummary) {
+    const summaryItems = Object.values(officeLikeSummary)
+    const totalFailCount = summaryItems
+      .filter((it) => it.status === 'failed')
+      .reduce((s, it) => s + it.count, 0)
+
+    return (
+      <div className="assistant-panel" dir="rtl">
+        <div className="ap-header">
+          <span className="ap-header__title">בדיקת נגישות</span>
+          <span className="ap-header__subtitle">
+            {totalFailCount > 0
+              ? `נמצאו ${totalFailCount} ממצאים לתיקון`
+              : 'כל הבדיקות האוטומטיות עברו'}
+          </span>
+        </div>
+
+        {OFFICE_GROUPS.map((group) => (
+          <section key={group.label} className="ap-section">
+            <div className="ap-section__label">{group.label}</div>
+            {group.keys.map((key) => {
+              const it = officeLikeSummary[key]
+              if (!it) return null
+              return <OfficeLikeCheckRow key={key} item={it} />
+            })}
+          </section>
+        ))}
+
+        {quickFix.length > 0 && (
+          <section className="ap-section ap-section--qf">
+            <div className="ap-section__label">
+              הצעות Quick Fix
+              <span className="ap-tally ap-tally--qf">{qfOccurrences}</span>
+            </div>
+            {quickFix.map((issue, index) => (
+              <IssueRow
+                key={`${issue.id}-${issue.location}-${index}`}
+                issue={issue}
+                isExpanded={expanded.has(issue.id)}
+                onToggle={() => toggle(issue.id)}
+                isQuickFix
+              />
+            ))}
+          </section>
+        )}
+      </div>
+    )
+  }
+
+  // ── Standard rendering (non-PPTX or no officeLikeSummary) ────────────────────
+
   // Counts derived directly from the issues array — single source of truth
   const totalOccurrences   = issues.reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
   const highOccurrences    = issues.filter((i) => i.severity === 'high').reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
   const mediumOccurrences  = issues.filter((i) => i.severity === 'medium').reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
-  const qfOccurrences      = quickFix.reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
 
   const knownChecks = CHECKS_BY_TYPE[fileType] ?? []
   const backendStatusById = new Map((checkStatuses || []).map((check) => [check.id, check]))

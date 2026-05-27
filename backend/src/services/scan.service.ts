@@ -2,6 +2,9 @@ import type { WcagRuleKey } from '../data/wcag.rules.js'
 import { getWcagRule } from '../data/wcag.rules.js'
 import type {
   FileType,
+  OfficeLikeSummary,
+  OfficeLikeSummaryItem,
+  OfficeLikeSummaryStatus,
   ScanCheckStatus,
   ScanIssue,
   ScanResult,
@@ -175,6 +178,28 @@ function buildScanDiagnostics(signals: ExtractedSignals): Record<string, unknown
     pptxMergedCellCount: signals.pptxMergedCellCount ?? 0,
     pptxMediaCount: signals.pptxMediaCount ?? 0,
     pptxMediaMissingCaptionsCount: signals.pptxMediaMissingCaptionsCount ?? 0,
+    officeLikeDiagnostics: {
+      // ── Missing alt text ──────────────────────────────────────────────────────
+      missingAltTextRawCount: signals.missingAltCount ?? 0,
+      missingAltTextOfficeLikeCount: signals.officeLikeMissingAltCount ?? 0,
+      // Alt-text exclusion breakdown
+      excludedDecorative: signals.decorativeCandidateCount ?? 0,
+      excludedMasterOrLayout: signals.officeLikeAltExcludedLayout ?? 0,
+      excludedFooterOrLogo: 0,  // included in excludedMasterOrLayout (tiny + non-picture layout shapes)
+      excludedRepeatedTemplateStrongEvidence: signals.officeLikeAltExcludedLayout ?? 0,
+      includedActionableImages: signals.officeLikeMissingAltCount ?? 0,
+      // legacy field kept for backward-compat
+      excludedRepeatedTemplateCount: signals.officeLikeAltExcludedLayout ?? 0,
+      excludedDecorativeCount: signals.decorativeCandidateCount ?? 0,
+      // ── Missing slide title ───────────────────────────────────────────────────
+      missingSlideTitleRawCount: signals.missingTitleSlides?.length ?? 0,
+      missingSlideTitleOfficeLikeCount: signals.officeLikeMissingTitleSlides?.length ?? 0,
+      slidesWithRealTitlePlaceholder: signals.officeLikeTitleWithRealPlaceholderCount ?? 0,
+      slidesMissingOfficeLikeTitle: signals.officeLikeMissingTitleSlides?.length ?? 0,
+      // ── Reading order ─────────────────────────────────────────────────────────
+      readingOrderRawCount: signals.readingOrderRiskSlides?.length ?? 0,
+      readingOrderOfficeLikeCount: signals.officeLikeReadingOrderCount ?? 0,
+    },
   }
 }
 
@@ -257,6 +282,98 @@ function buildPptxCheckStatuses(signals: ExtractedSignals, issues: ScanIssue[]):
   return statuses
 }
 
+function item(
+  label: string,
+  status: OfficeLikeSummaryStatus,
+  count: number,
+  note?: string,
+): OfficeLikeSummaryItem {
+  return { label, status, count, ...(note ? { note } : {}) }
+}
+
+function buildOfficeLikeSummary(signals: ExtractedSignals): OfficeLikeSummary {
+  // Contrast: only flag as failed when explicit fg+bg pair was used (not white-fallback bg).
+  // Falls back to passed when all checked runs used the white-fallback background.
+  const contrastExplicitCount = signals.contrastIssuesWithExplicitBg ?? 0
+  const contrastStatus: OfficeLikeSummaryStatus = contrastExplicitCount > 0 ? 'failed' : 'passed'
+
+  // Missing alt text: office-like count excludes layout-inherited images (template logos,
+  // branding graphics). Falls back to raw missingAltCount if the refined signal is absent.
+  const missingAltCount = signals.officeLikeMissingAltCount ?? signals.missingAltCount ?? 0
+  const missingAltStatus: OfficeLikeSummaryStatus = missingAltCount > 0 ? 'failed' : 'passed'
+
+  // Media captions: if no media objects detected, passed.
+  const mediaMissingCount = signals.pptxMediaMissingCaptionsCount ?? 0
+  const mediaStatus: OfficeLikeSummaryStatus = mediaMissingCount > 0 ? 'failed' : 'passed'
+
+  // Table checks: based on DrawingML table analysis.
+  const tableHeaderMissing = signals.pptxTablesMissingHeaderCount ?? 0
+  const tableHeaderStatus: OfficeLikeSummaryStatus = tableHeaderMissing > 0 ? 'failed' : 'passed'
+  const mergedCellCount = signals.pptxMergedCellCount ?? 0
+  const mergedCellStatus: OfficeLikeSummaryStatus = mergedCellCount > 0 ? 'failed' : 'passed'
+  const tableNote = `נבדקו ${signals.pptxTableCount ?? 0} טבלאות DrawingML.`
+
+  // Slide title: office-like count also covers slides whose title came from cSld-name only.
+  // PowerPoint requires a title placeholder; cSld-name is not a recognized title source.
+  const missingTitleCount =
+    signals.officeLikeMissingTitleSlides?.length ?? signals.missingTitleSlides?.length ?? 0
+  const missingTitleStatus: OfficeLikeSummaryStatus = missingTitleCount > 0 ? 'failed' : 'passed'
+  const dupTitleCount = signals.duplicateTitleSlides?.length ?? 0
+  const dupTitleStatus: OfficeLikeSummaryStatus = dupTitleCount > 0 ? 'failed' : 'passed'
+
+  // Reading order: office-like uses an inclusive object count (>= 3 visible objects per slide,
+  // including placeholders) rather than the strict accessibility-score threshold used for raw issues.
+  // Always manual status — this is a review warning, not a guaranteed content failure.
+  const readingOrderCount =
+    signals.officeLikeReadingOrderCount ?? signals.readingOrderRiskSlides?.length ?? 0
+
+  return {
+    contrast: item(
+      'ניגודיות טקסט קשה לקריאה',
+      contrastStatus,
+      contrastExplicitCount,
+      contrastStatus === 'passed'
+        ? 'נבדקו רק זוגות של צבע קדמי/רקע מפורשים; צבעי ערכת נושא ורקע לא מפורש דורשים בדיקה ידנית.'
+        : undefined,
+    ),
+    missingAltText: item('חסר טקסט חלופי', missingAltStatus, missingAltCount),
+    mediaCaptions: item(
+      'חסרות כתוביות לאודיו/וידאו',
+      mediaStatus,
+      mediaMissingCount,
+      mediaStatus === 'passed'
+        ? `זוהו ${signals.pptxMediaCount ?? 0} אובייקטי מדיה; לא זוהתה מדיה ללא כתוביות.`
+        : undefined,
+    ),
+    tableHeader: item(
+      'חסרת שורת כותרת בטבלה',
+      tableHeaderStatus,
+      tableHeaderMissing,
+      tableHeaderStatus === 'passed' ? tableNote : undefined,
+    ),
+    mergedCells: item(
+      'שימוש בתאים ממוזגים או מפוצלים',
+      mergedCellStatus,
+      mergedCellCount,
+      mergedCellStatus === 'passed' ? tableNote : undefined,
+    ),
+    missingSlideTitle: item('שקופית ללא כותרת', missingTitleStatus, missingTitleCount),
+    duplicateSlideTitle: item('כותרת שקופית כפולה', dupTitleStatus, dupTitleCount),
+    readingOrder: item(
+      'בדיקת סדר קריאה',
+      'manual',
+      readingOrderCount,
+      'בדיקה היוריסטית; אמתו את סדר הקריאה בחלונית Reading Order ב-PowerPoint לפני פרסום.',
+    ),
+    restrictedAccess: item(
+      'גישה מוגבלת למסמך',
+      'manual',
+      0,
+      'הרשאות מסמך אינן ניתנות לסריקה אוטומטית.',
+    ),
+  }
+}
+
 export async function generateScanResult(
   filePath: string,
   fileName: string,
@@ -306,6 +423,7 @@ export async function generateScanResult(
   const checkStatuses = buildPptxCheckStatuses(signals, issues)
   const manualReviewChecks = checkStatuses.filter((c) => c.status === 'manual' || c.status === 'partial' || c.status === 'not_checked')
   const scanDiagnostics = buildScanDiagnostics(signals)
+  const officeLikeSummary = fileType === 'pptx' ? buildOfficeLikeSummary(signals) : undefined
 
   if (DEBUG_SCAN && fileType === 'pptx') {
     console.log('[AccessiOffice PPTX diagnostics response]', {
@@ -338,6 +456,7 @@ export async function generateScanResult(
     scanDiagnostics,
     ...(checkStatuses.length > 0 ? { checkStatuses } : {}),
     ...(manualReviewChecks.length > 0 ? { manualReviewChecks } : {}),
+    ...(officeLikeSummary ? { officeLikeSummary } : {}),
   }
 }
 

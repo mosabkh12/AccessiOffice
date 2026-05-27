@@ -45,6 +45,8 @@ export default function UploadPage() {
 
   function handleFile(selected) {
     setError('')
+    // Clear previous scan results so the new scan starts fresh
+    setScanData(null)
     if (!selected) return
 
     const type = getFileType(selected.name)

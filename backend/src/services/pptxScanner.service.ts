@@ -539,6 +539,39 @@ function isPictureLikeObject(obj: InventoryObject): boolean {
   )
 }
 
+/**
+ * Returns true only when a fromLayout object has STRONG evidence it is a non-actionable
+ * template decoration (logo strip, tiny accent, connector).  When uncertain, returns false
+ * so the item is counted in the office-like missing-alt total.
+ *
+ * Conservative by design: a false-negative (including a real logo) is better than a
+ * false-positive (hiding a real content image from the office-like checker).
+ */
+function isStrongTemplateDecoration(obj: InventoryObject): boolean {
+  if (!obj.fromLayout) return false
+  // Tiny shapes (small logos, icon badges, decorative accents) — not user-actionable content
+  if (isThinOrSmall(obj)) return true
+  // Non-picture layout elements (autoshapes, connectors, freeforms without image content)
+  // are design chrome, not real accessibility-relevant content
+  if (!isPictureLikeObject(obj)) return true
+  // A picture-like object (blip/chart/media) from the layout with meaningful size may be
+  // real slide content that PowerPoint exposes to the user — keep it actionable
+  return false
+}
+
+/**
+ * Office-like missing-title check — stricter than the raw isMissingTitle flag.
+ * Requires actual non-boilerplate text in a title/ctrTitle placeholder.
+ * cSld-name and heading text boxes do not count as structural slide titles.
+ * No exemptions for slide 1 or title-slide layouts — matches PowerPoint's own checker.
+ */
+function isOfficeLikeMissingTitle(titleInfo: SlideTitleInfo): boolean {
+  const hasMeaningfulPlaceholderTitle =
+    titleInfo.titleTexts.some((t) => !isBoilerplateTitleText(t)) ||
+    titleInfo.hiddenTitleTexts.some((t) => !isBoilerplateTitleText(t))
+  return !hasMeaningfulPlaceholderTitle
+}
+
 function classifyAccessibilityObject(
   obj: InventoryObject,
   chunkXml: string,
@@ -1491,8 +1524,14 @@ export function analyzePptx(
   const mergedCellLocations: string[] = []
   const mediaCaptionLocations: string[] = []
   let missingAltCount = 0
+  let officeLikeMissingAltCount = 0
+  let officeLikeAltExcludedLayout = 0   // fromLayout + strong-template-decoration evidence
+  const officeLikeMissingTitleSlides: number[] = []
+  let officeLikeTitleWithRealPlaceholderCount = 0
+  let officeLikeReadingOrderCount = 0
   let decorativeCandidateCount = 0
   let contrastIssues = 0
+  let contrastIssuesWithExplicitBg = 0
   let contrastCheckedRuns = 0
   let contrastSkippedRuns = 0
   let contrastTextRuns = 0
@@ -1523,6 +1562,23 @@ export function analyzePptx(
       signatureRepeat,
     )
     logObjectInventory(slideNum, inventory)
+
+    // Office-like reading order: count slides with >= 3 visible content objects.
+    // Uses an inclusive filter (title+body placeholders + images + text boxes) matching
+    // what PowerPoint's Reading Order Pane exposes to users.
+    const officeLikeROObjects = inventory.filter(
+      (o) =>
+        !o.fromLayout &&
+        !o.hidden &&
+        !o.isFooterPlaceholder &&
+        !o.isSlideNumberPlaceholder &&
+        !o.isDatePlaceholder &&
+        (o.hasText || o.hasBlip || o.hasGraphicData || o.tag === 'pic'),
+    )
+    if (officeLikeROObjects.length >= 3) {
+      officeLikeReadingOrderCount++
+    }
+
     const readingOrder = computeReadingOrderScore(slideXml, inventory, titleInfo)
     const slideClass = summarizeSlideClassification(
       slideNum,
@@ -1537,6 +1593,7 @@ export function analyzePptx(
     let slideMissingAlt = 0
     let slideDecorative = 0
 
+    // Raw issue: follows the existing heuristic (may include slide-1 / layout exemptions)
     if (titleInfo.isMissingTitle) {
       missingTitleSlides.push(slideNum)
       drafts.push({
@@ -1551,6 +1608,13 @@ export function analyzePptx(
         location: `שקופית ${slideNum}`,
         confidence: 'High',
       })
+    }
+    // Office-like title check: stricter — no exemptions for slide-1 or title-layout.
+    // Requires a real non-boilerplate title placeholder (cSld-name and text boxes do not count).
+    if (isOfficeLikeMissingTitle(titleInfo)) {
+      officeLikeMissingTitleSlides.push(slideNum)
+    } else {
+      officeLikeTitleWithRealPlaceholderCount++
     }
 
     for (const obj of inventory) {
@@ -1580,6 +1644,14 @@ export function analyzePptx(
       if (obj.accessibilityState === 'needsAltText') {
         slideMissingAlt++
         missingAltCount++
+        // Office-like: exclude only objects that are clearly non-actionable template
+        // decorations (tiny logos, non-picture layout accents).  Picture-like objects from
+        // the layout with meaningful size are still counted — PowerPoint exposes them.
+        if (!isStrongTemplateDecoration(obj)) {
+          officeLikeMissingAltCount++
+        } else {
+          officeLikeAltExcludedLayout++
+        }
         missingAltLocations.push(loc)
         drafts.push({
           id: `missing-alt-${slideNum}-${obj.cnvId}`,
@@ -1673,6 +1745,9 @@ export function analyzePptx(
     contrastTextRuns += contrastResult.textRuns
     if (contrastResult.count >= 1) {
       contrastIssues += contrastResult.count
+      if (!contrastResult.usedWhiteFallback) {
+        contrastIssuesWithExplicitBg += contrastResult.count
+      }
       contrastIssueLocations.push(`שקופית ${slideNum}`)
       const officeTitles = OFFICE_TITLES as typeof OFFICE_TITLES & { lowContrast?: string }
       drafts.push({
@@ -1876,11 +1951,17 @@ export function analyzePptx(
     duplicateTitleSlides,
     imageLikeObjectCount: inventorySummaries.reduce((s, i) => s + i.imageLikeObjects, 0),
     missingAltCount,
+    officeLikeMissingAltCount,
+    officeLikeAltExcludedLayout,
+    officeLikeMissingTitleSlides,
+    officeLikeTitleWithRealPlaceholderCount,
+    officeLikeReadingOrderCount,
     decorativeCandidateCount,
     readingOrderRiskSlides,
     contrastCheckStatus,
     contrastCheckedRuns,
     contrastSkippedRuns,
+    contrastIssuesWithExplicitBg,
     pptxTableCount,
     pptxTablesMissingHeaderCount,
     pptxMergedCellCount,
