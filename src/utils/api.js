@@ -112,8 +112,12 @@ export function normalizeScanResponse(api, clientFileName) {
   const manualReviewChecks = Array.isArray(api.manualReviewChecks)
     ? api.manualReviewChecks
     : checkStatuses.filter((c) => ['manual', 'partial', 'not_checked'].includes(c?.status))
-  const officeLikeSummary = api.officeLikeSummary ?? null
-  const fileHash = api.fileHash ?? null
+  const officeLikeSummary    = api.officeLikeSummary    ?? null
+  const fileHash             = api.fileHash             ?? null
+  const engine               = api.engine               ?? 'xml'
+  const workerError          = api.workerError          ?? null
+  const workerScannerVersion = api.workerScannerVersion ?? null
+  const powerpointWorkerRaw  = api.powerpointWorkerRaw  ?? null
 
   // Resolve occurrence-aware counts with backward-compatible fallbacks
   const totalOccurrences  = summary.totalOccurrences  ?? issues.reduce((s, i) => s + (i.occurrenceCount ?? 1), 0)
@@ -158,7 +162,10 @@ export function normalizeScanResponse(api, clientFileName) {
   if (DEBUG_SCAN) {
     console.log('[SCAN RESPONSE] Data sources:', {
       fileHash,
-      sectionA_source: officeLikeSummary ? 'officeLikeSummary (office-like grouped view)' : 'AssistantPanel standard rendering',
+      engine,
+      workerError,
+      workerScannerVersion,
+      sectionA_source: officeLikeSummary ? `officeLikeSummary (engine: ${engine})` : 'AssistantPanel standard rendering',
       sectionB_source: officeLikeSummary ? `issues[${issues.length}] + quickFix[${quickFix.length}] (detailed WCAG findings)` : 'N/A',
       officeLikeSummary: officeLikeSummary
         ? Object.entries(officeLikeSummary).map(([k, v]) => `${k}: ${v.status} (${v.count})`)
@@ -220,6 +227,10 @@ export function normalizeScanResponse(api, clientFileName) {
     manualReviewChecks,
     officeLikeSummary,
     fileHash,
+    engine,
+    workerError,
+    workerScannerVersion,
+    powerpointWorkerRaw,
     recommendations: [...new Set(issues.map((i) => i.recommendation).filter(Boolean))],
     criticalAnalysis,
     limitations: [

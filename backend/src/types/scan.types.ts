@@ -63,17 +63,20 @@ export interface OfficeLikeSummaryItem {
   note?: string
 }
 
+/**
+ * Map of accessibility check key → item.
+ * PPTX keys: contrast, missingAltText, mediaCaptions, tableHeader, mergedCells,
+ *             missingSlideTitle, duplicateSlideTitle, readingOrder, restrictedAccess
+ * DOCX keys: contrast, missingAltText, tableHeader, mergedCells,
+ *             unclearHyperlinkText, documentTitle, restrictedAccess
+ * The index signature allows both engines to share the same type.
+ */
 export interface OfficeLikeSummary {
-  contrast: OfficeLikeSummaryItem
-  missingAltText: OfficeLikeSummaryItem
-  mediaCaptions: OfficeLikeSummaryItem
-  tableHeader: OfficeLikeSummaryItem
-  mergedCells: OfficeLikeSummaryItem
-  missingSlideTitle: OfficeLikeSummaryItem
-  duplicateSlideTitle: OfficeLikeSummaryItem
-  readingOrder: OfficeLikeSummaryItem
-  restrictedAccess: OfficeLikeSummaryItem
+  [key: string]: OfficeLikeSummaryItem
 }
+
+/** Which engine produced the officeLikeSummary counts */
+export type ScanEngine = 'xml' | 'office-engine' | 'hybrid'
 
 export interface ScanResult {
   fileName: string
@@ -94,4 +97,10 @@ export interface ScanResult {
   checkStatuses?: ScanCheckStatus[]
   manualReviewChecks?: ScanCheckStatus[]
   officeLikeSummary?: OfficeLikeSummary
+  /** Which engine produced officeLikeSummary: xml = XML-only, office-engine = PPT worker, hybrid = PPT worker failed + XML fallback */
+  engine?: ScanEngine
+  /** Set when the PowerPoint worker failed and XML fallback was used */
+  workerError?: string
+  /** Office version string reported by the COM worker (e.g. "16.0") */
+  workerScannerVersion?: string
 }

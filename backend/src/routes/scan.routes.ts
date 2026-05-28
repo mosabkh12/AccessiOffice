@@ -12,9 +12,21 @@ import {
 } from '../services/scan.service.js'
 import { resolveDisplayFileName } from '../utils/filename.js'
 import type { ScanResult } from '../types/scan.types.js'
+import { runPptxWorker } from '../workers/powerpointWorker.js'
+import { runWordWorker } from '../workers/wordWorker.js'
+import { runExcelWorker } from '../workers/excelWorker.js'
+import {
+  mergeWorkerIntoResult,
+  markWorkerFallback,
+  mergeWordWorkerIntoResult,
+  markWordWorkerFallback,
+  mergeExcelWorkerIntoResult,
+  markExcelWorkerFallback,
+} from '../services/officeEngine.service.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const uploadsDir = path.join(__dirname, '../../uploads')
+const wordTmpDir = path.join(__dirname, '../../tmp')
 const DEBUG_SCAN = process.env.ACCESSIOFFICE_DEBUG_SCAN === 'true'
 
 if (!fs.existsSync(uploadsDir)) {
@@ -45,6 +57,9 @@ const upload = multer({
 const router = Router()
 const PPTX_RESPONSE_VERSION = 'pptx-diagnostics-v2'
 const PPTX_RESPONSE_DEBUG_MARKER = 'API-SCAN-RESPONSE-V2-ACTIVE'
+const PPTX_WORKER_DEBUG = process.env.PPTX_WORKER_DEBUG === 'true'
+const WORD_WORKER_DEBUG  = process.env.WORD_WORKER_DEBUG  === 'true'
+const EXCEL_WORKER_DEBUG = process.env.EXCEL_WORKER_DEBUG === 'true'
 
 function ensurePptxDiagnosticsResponse(result: ScanResult): ScanResult {
   if (result.fileType !== 'pptx') return result
@@ -117,7 +132,7 @@ router.post('/scan', upload.single('file'), async (req, res) => {
       })
     }
 
-    const result = await generateScanResult(
+    const xmlResult = await generateScanResult(
       uploaded.path,
       displayName,
       fileType,
@@ -125,7 +140,179 @@ router.post('/scan', upload.single('file'), async (req, res) => {
       scanType,
       fileSize,
     )
-    const responseBody = { ...ensurePptxDiagnosticsResponse(result), fileHash }
+
+    // ── PowerPoint worker (PPTX only, opt-in via PPTX_WORKER_ENABLED) ──────
+    let finalResult: ScanResult = xmlResult
+    let workerRaw: {
+      executedMso?: string
+      counts: Record<string, number>
+      statuses: Record<string, string>
+      rawOfficeText: string[]
+    } | null = null
+
+    if (fileType === 'pptx' && process.env.PPTX_WORKER_ENABLED === 'true') {
+      const workerOut = await runPptxWorker(uploaded.path)
+      if (workerOut.ok) {
+        finalResult = mergeWorkerIntoResult(xmlResult, workerOut)
+        if (PPTX_WORKER_DEBUG) {
+          workerRaw = {
+            executedMso: workerOut.executedMso,
+            counts: workerOut.counts,
+            statuses: workerOut.statuses,
+            rawOfficeText: workerOut.rawOfficeText,
+          }
+        }
+        if (DEBUG_SCAN) {
+          console.log('[PPT WORKER] Success — engine: office-engine', {
+            pptVersion: workerOut.pptVersion,
+            counts: workerOut.counts,
+          })
+        }
+      } else {
+        finalResult = markWorkerFallback(xmlResult, workerOut.error)
+        console.warn('[PPT WORKER] Falling back to XML scanner:', workerOut.error)
+      }
+    }
+
+    // ── Word worker (DOCX only, opt-in via WORD_WORKER_ENABLED) ─────────────
+    let wordWorkerRaw: {
+      executedMso?: string
+      counts: Record<string, number>
+      statuses: Record<string, string>
+      rawOfficeText: string[]
+      openedFilePath?: string
+      openedFileName?: string
+      verifiedWindowTitle?: string | null
+      pollCount?: number
+      parseTrace?: object[]
+    } | null = null
+
+    if (fileType === 'docx' && process.env.WORD_WORKER_ENABLED === 'true') {
+      // Debug: save a copy of the uploaded DOCX so it can be tested manually
+      // with the same file the worker will receive, even after cleanup.
+      if (WORD_WORKER_DEBUG) {
+        try {
+          if (!fs.existsSync(wordTmpDir)) fs.mkdirSync(wordTmpDir, { recursive: true })
+          const debugDest = path.join(wordTmpDir, 'debug-last-word-upload.docx')
+          fs.copyFileSync(uploaded.path, debugDest)
+          console.log(`[WORD DEBUG] Saved debug copy → ${debugDest}`)
+          console.log(`[WORD DEBUG] Manual test: powershell -NonInteractive -NoProfile -ExecutionPolicy Bypass -File .\\backend\\scripts\\wordAccessibilityCheck.ps1 -FilePath "${debugDest}"`)
+        } catch { /* best-effort */ }
+      }
+
+      const workerOut = await runWordWorker(uploaded.path)
+      if (workerOut.ok) {
+        finalResult = mergeWordWorkerIntoResult(xmlResult, workerOut)
+        if (WORD_WORKER_DEBUG) {
+          wordWorkerRaw = {
+            executedMso:          workerOut.executedMso,
+            counts:               workerOut.counts,
+            statuses:             workerOut.statuses,
+            rawOfficeText:        workerOut.rawOfficeText,
+            openedFilePath:       workerOut.openedFilePath,
+            openedFileName:       workerOut.openedFileName,
+            verifiedWindowTitle:  workerOut.verifiedWindowTitle,
+            pollCount:            workerOut.pollCount,
+            parseTrace:           workerOut.parseTrace,
+          }
+        }
+        if (DEBUG_SCAN) {
+          console.log('[WORD WORKER] Success — engine: office-engine', {
+            wordVersion: workerOut.wordVersion,
+            counts: workerOut.counts,
+          })
+        }
+      } else {
+        finalResult = markWordWorkerFallback(xmlResult, workerOut.error)
+        console.warn('[WORD WORKER] Falling back to XML scanner:', workerOut.error)
+      }
+    }
+
+    // ── Excel worker (XLSX only, opt-in via EXCEL_WORKER_ENABLED) ──────────────
+    let excelWorkerRaw: {
+      executedMso?: string
+      counts: Record<string, number>
+      statuses: Record<string, string>
+      rawOfficeText: string[]
+      openedFilePath?: string
+      openedFileName?: string
+      verifiedWindowTitle?: string | null
+      pollCount?: number
+      parseTrace?: object[]
+    } | null = null
+
+    if (EXCEL_WORKER_DEBUG) {
+      console.log('[EXCEL WORKER] Request received', {
+        fileType,
+        EXCEL_WORKER_ENABLED: process.env.EXCEL_WORKER_ENABLED,
+        tempFilePath: uploaded.path,
+      })
+    }
+
+    if (fileType === 'xlsx' && process.env.EXCEL_WORKER_ENABLED === 'true') {
+      // Debug: save a copy of the uploaded XLSX so it can be tested manually
+      // with the same file the worker will receive, even after cleanup.
+      if (EXCEL_WORKER_DEBUG) {
+        try {
+          if (!fs.existsSync(wordTmpDir)) fs.mkdirSync(wordTmpDir, { recursive: true })
+          const debugDest = path.join(wordTmpDir, 'debug-last-excel-upload.xlsx')
+          fs.copyFileSync(uploaded.path, debugDest)
+          console.log(`[EXCEL DEBUG] Saved debug copy -> ${debugDest}`)
+          console.log(`[EXCEL DEBUG] Manual test: powershell -NonInteractive -NoProfile -ExecutionPolicy Bypass -File .\\backend\\scripts\\excelAccessibilityCheck.ps1 -FilePath "${debugDest}"`)
+        } catch { /* best-effort */ }
+      }
+
+      const workerOut = await runExcelWorker(uploaded.path)
+
+      if (EXCEL_WORKER_DEBUG) {
+        console.log('[EXCEL WORKER] Result', {
+          ok: workerOut.ok,
+          ...(workerOut.ok
+            ? { counts: workerOut.counts, excelVersion: workerOut.excelVersion }
+            : { error: workerOut.error }),
+        })
+      }
+
+      if (workerOut.ok) {
+        finalResult = mergeExcelWorkerIntoResult(xmlResult, workerOut)
+
+        if (EXCEL_WORKER_DEBUG) {
+          excelWorkerRaw = {
+            executedMso:         workerOut.executedMso,
+            counts:              workerOut.counts,
+            statuses:            workerOut.statuses,
+            rawOfficeText:       workerOut.rawOfficeText,
+            openedFilePath:      workerOut.openedFilePath,
+            openedFileName:      workerOut.openedFileName,
+            verifiedWindowTitle: workerOut.verifiedWindowTitle,
+            pollCount:           workerOut.pollCount,
+            parseTrace:          workerOut.parseTrace,
+          }
+          console.log('[EXCEL WORKER] officeLikeSummary.mergedCells', {
+            count:  finalResult.officeLikeSummary?.mergedCells?.count,
+            status: finalResult.officeLikeSummary?.mergedCells?.status,
+          })
+        }
+
+        if (DEBUG_SCAN) {
+          console.log('[EXCEL WORKER] Success — engine: office-engine', {
+            excelVersion: workerOut.excelVersion,
+            counts:       workerOut.counts,
+          })
+        }
+      } else {
+        finalResult = markExcelWorkerFallback(xmlResult, workerOut.error)
+        console.warn('[EXCEL WORKER] Falling back to XML scanner:', workerOut.error)
+      }
+    }
+
+    const responseBody = {
+      ...ensurePptxDiagnosticsResponse(finalResult),
+      fileHash,
+      ...(workerRaw      ? { powerpointWorkerRaw: workerRaw }  : {}),
+      ...(wordWorkerRaw  ? { wordWorkerRaw }                   : {}),
+      ...(excelWorkerRaw ? { excelWorkerRaw }                  : {}),
+    }
     cleanup(uploaded.path)
     res.json(responseBody)
   } catch {

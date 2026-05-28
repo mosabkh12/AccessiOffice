@@ -23,4 +23,7 @@ import { PPTX_SCANNER_BUILD } from './services/pptxScanner.service.js'
 app.listen(PORT, () => {
   console.log(`AccessiOffice API running on http://localhost:${PORT}`)
   console.log(`[AccessiOffice] Backend started with PPTX scanner version: ${PPTX_SCANNER_BUILD}`)
+  if (process.env.EXCEL_WORKER_DEBUG === 'true') {
+    console.log(`[EXCEL WORKER] enabled=${process.env.EXCEL_WORKER_ENABLED ?? 'unset'} timeout=${process.env.EXCEL_WORKER_TIMEOUT_MS ?? '45000'}ms`)
+  }
 })

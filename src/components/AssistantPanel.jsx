@@ -204,6 +204,8 @@ export default function AssistantPanel({
   scannerVersion,
   officeLikeSummary = null,
   detailedOnly = false,
+  engine = 'xml',
+  workerError = null,
 }) {
   const [expanded, setExpanded] = useState(new Set())
 
@@ -284,6 +286,22 @@ export default function AssistantPanel({
 
     return (
       <div className="assistant-panel" dir="rtl">
+        {/* Worker error banner — shown when PPT worker failed and XML fallback was used */}
+        {workerError && (
+          <div className="ap-worker-warning" role="alert" dir="rtl">
+            <span className="ap-worker-warning__icon" aria-hidden="true">⚠</span>
+            <span className="ap-worker-warning__text">
+              מנוע PowerPoint לא זמין — הנתונים מבוססים על ניתוח XML.
+            </span>
+          </div>
+        )}
+        {/* Engine badge — shown when the real PPT worker was used */}
+        {engine === 'office-engine' && !workerError && (
+          <div className="ap-engine-badge" dir="rtl">
+            <span className="ap-engine-badge__icon" aria-hidden="true">✓</span>
+            מופעל על ידי Microsoft PowerPoint Accessibility Checker
+          </div>
+        )}
         <div className="ap-header">
           <span className="ap-header__title">בדיקת נגישות</span>
           <span className="ap-header__subtitle">
