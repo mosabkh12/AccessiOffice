@@ -1,7 +1,9 @@
 import { spawn } from 'child_process'
 import path       from 'path'
+import { fileURLToPath } from 'url'
 
-const SCRIPT = path.resolve(process.cwd(), 'scripts', 'excelAccessibilityCheck.ps1')
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const SCRIPT = path.resolve(__dirname, '../../scripts/excelAccessibilityCheck.ps1')
 
 // Read all env vars dynamically at call time so that dotenv (loaded in index.ts
 // after ES module imports are evaluated) can still influence these values.

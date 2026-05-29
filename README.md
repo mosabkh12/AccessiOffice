@@ -10,6 +10,10 @@ Office Accessibility Checker - React + Vite frontend with Node.js + Express API.
 
 ## Setup
 
+> Windows PowerShell note: if `npm` is blocked with an unsigned `npm.ps1`
+> execution-policy error, use `npm.cmd` in the commands below, for example
+> `npm.cmd install` and `npm.cmd run dev:all`.
+
 ### 1. Frontend
 
 ```bash
@@ -22,9 +26,11 @@ cp .env.example .env
 ```bash
 cd backend
 npm install
-cp .env.example .env
 cd ..
 ```
+
+The backend reads the same root `.env` file as the frontend. Do not create a
+separate `backend/.env`.
 
 ## Run locally
 

@@ -1,7 +1,9 @@
 import { spawn } from 'child_process'
 import path       from 'path'
+import { fileURLToPath } from 'url'
 
-const SCRIPT   = path.resolve(process.cwd(), 'scripts', 'pptxAccessibilityCheck.ps1')
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const SCRIPT   = path.resolve(__dirname, '../../scripts/pptxAccessibilityCheck.ps1')
 const enabled  = () => process.env.PPTX_WORKER_ENABLED   === 'true'
 const timeout  = () => Number(process.env.PPTX_WORKER_TIMEOUT_MS ?? 45_000)
 const isDebug  = () => process.env.PPTX_WORKER_DEBUG      === 'true'
