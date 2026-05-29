@@ -1,9 +1,13 @@
 import express from 'express'
 import cors from 'cors'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import scanRoutes, { scanErrorHandler } from './routes/scan.routes.js'
 
-dotenv.config()
+// Load from project root AccessiOffice/.env (two levels up from backend/src/)
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+dotenv.config({ path: path.resolve(__dirname, '../../.env') })
 
 const app = express()
 const PORT = Number(process.env.PORT) || 4000

@@ -1,10 +1,10 @@
 import { spawn } from 'child_process'
 import path       from 'path'
 
-const SCRIPT  = path.resolve(process.cwd(), 'scripts', 'pptxAccessibilityCheck.ps1')
-const TIMEOUT = Number(process.env.PPTX_WORKER_TIMEOUT_MS ?? 45_000)
-const ENABLED = process.env.PPTX_WORKER_ENABLED === 'true'
-const DEBUG   = process.env.PPTX_WORKER_DEBUG === 'true'
+const SCRIPT   = path.resolve(process.cwd(), 'scripts', 'pptxAccessibilityCheck.ps1')
+const enabled  = () => process.env.PPTX_WORKER_ENABLED   === 'true'
+const timeout  = () => Number(process.env.PPTX_WORKER_TIMEOUT_MS ?? 45_000)
+const isDebug  = () => process.env.PPTX_WORKER_DEBUG      === 'true'
 
 // Single-slot concurrency queue — PowerPoint COM is not thread-safe
 let _busy = false
@@ -58,7 +58,7 @@ export type WorkerOutput = WorkerSuccess | WorkerFailure
  * Always resolves — never rejects. Returns WorkerFailure on any error.
  */
 export async function runPptxWorker(filePath: string): Promise<WorkerOutput> {
-  if (!ENABLED) {
+  if (!enabled()) {
     return { ok: false, error: 'PPTX_WORKER_ENABLED is not set to true' }
   }
 
@@ -94,11 +94,12 @@ function spawnWorker(filePath: string): Promise<WorkerOutput> {
     let stderr   = ''
     let timedOut = false
 
+    const ms = timeout()
     const timer = setTimeout(() => {
       timedOut = true
       try { ps.kill() } catch { /* ignore */ }
-      resolve({ ok: false, error: `PowerPoint worker timed out after ${TIMEOUT}ms` })
-    }, TIMEOUT)
+      resolve({ ok: false, error: `PowerPoint worker timed out after ${ms}ms` })
+    }, ms)
 
     ps.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
 
@@ -106,7 +107,7 @@ function spawnWorker(filePath: string): Promise<WorkerOutput> {
       const text = chunk.toString()
       stderr += text
       // Forward PowerShell debug messages to Node stderr when debug is on
-      if (DEBUG) process.stderr.write(`[PPT WORKER] ${text}`)
+      if (isDebug()) process.stderr.write(`[PPT WORKER] ${text}`)
     })
 
     ps.on('close', () => {
@@ -121,7 +122,7 @@ function spawnWorker(filePath: string): Promise<WorkerOutput> {
 
       try {
         const parsed = JSON.parse(raw) as WorkerOutput
-        if (DEBUG && parsed.ok) {
+        if (isDebug() && parsed.ok) {
           const s = parsed as WorkerSuccess
           console.error(`[PPT WORKER] Parsed OK — engine=${s.engine} counts=${JSON.stringify(s.counts)}`)
           if (s.rawOfficeText?.length) {

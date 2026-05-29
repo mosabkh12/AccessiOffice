@@ -1,10 +1,10 @@
 import { spawn } from 'child_process'
 import path       from 'path'
 
-const SCRIPT  = path.resolve(process.cwd(), 'scripts', 'wordAccessibilityCheck.ps1')
-const TIMEOUT = Number(process.env.WORD_WORKER_TIMEOUT_MS ?? 45_000)
-const ENABLED = process.env.WORD_WORKER_ENABLED === 'true'
-const DEBUG   = process.env.WORD_WORKER_DEBUG === 'true'
+const SCRIPT   = path.resolve(process.cwd(), 'scripts', 'wordAccessibilityCheck.ps1')
+const enabled  = () => process.env.WORD_WORKER_ENABLED   === 'true'
+const timeout  = () => Number(process.env.WORD_WORKER_TIMEOUT_MS ?? 45_000)
+const isDebug  = () => process.env.WORD_WORKER_DEBUG      === 'true'
 
 // Single-slot concurrency queue — Word COM is not thread-safe
 let _busy = false
@@ -69,7 +69,7 @@ export type WordWorkerOutput = WordWorkerSuccess | WordWorkerFailure
  * Always resolves — never rejects. Returns WordWorkerFailure on any error.
  */
 export async function runWordWorker(filePath: string): Promise<WordWorkerOutput> {
-  if (!ENABLED) {
+  if (!enabled()) {
     return { ok: false, error: 'WORD_WORKER_ENABLED is not set to true' }
   }
 
@@ -105,18 +105,19 @@ function spawnWorker(filePath: string): Promise<WordWorkerOutput> {
     let stderr   = ''
     let timedOut = false
 
+    const ms = timeout()
     const timer = setTimeout(() => {
       timedOut = true
       try { ps.kill() } catch { /* ignore */ }
-      resolve({ ok: false, error: `Word worker timed out after ${TIMEOUT}ms` })
-    }, TIMEOUT)
+      resolve({ ok: false, error: `Word worker timed out after ${ms}ms` })
+    }, ms)
 
     ps.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
 
     ps.stderr.on('data', (chunk: Buffer) => {
       const text = chunk.toString()
       stderr += text
-      if (DEBUG) process.stderr.write(`[WORD WORKER] ${text}`)
+      if (isDebug()) process.stderr.write(`[WORD WORKER] ${text}`)
     })
 
     ps.on('close', () => {
@@ -131,7 +132,7 @@ function spawnWorker(filePath: string): Promise<WordWorkerOutput> {
 
       try {
         const parsed = JSON.parse(raw) as WordWorkerOutput
-        if (DEBUG && parsed.ok) {
+        if (isDebug() && parsed.ok) {
           const s = parsed as WordWorkerSuccess
           console.error(`[WORD WORKER] Parsed OK — engine=${s.engine} counts=${JSON.stringify(s.counts)}`)
           if (s.rawOfficeText?.length) {
