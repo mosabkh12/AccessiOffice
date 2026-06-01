@@ -953,6 +953,29 @@ h3 { font-size: 1.15rem; }
   gap: 0.65rem;
 }
 
+/* Fix steps inside report cards and AssistantPanel expanded rows */
+.fix-steps {
+  display: grid;
+  gap: 0.3rem;
+}
+.fix-steps__title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.fix-steps__list {
+  margin: 0.2rem 0 0 0;
+  padding-inline-start: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.fix-steps__item {
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--text);
+}
+
 .report-title-group {
   margin: 1rem 0 1.25rem;
   padding-top: 0.75rem;
@@ -1258,6 +1281,18 @@ h3 { font-size: 1.15rem; }
   max-width: 55%;
 }
 
+/* Fix steps ordered list inside expanded Office Engine check rows */
+.ap-fix-steps-row { align-items: flex-start !important; flex-direction: column; gap: 0.25rem !important; }
+.ap-fix-steps-row dt { min-width: unset !important; margin-bottom: 0.2rem; }
+.ap-fix-steps {
+  margin: 0.2rem 0 0 0;
+  padding-inline-start: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.ap-fix-steps li { line-height: 1.5; color: var(--text); }
+
 /* All pass state */
 .ap-all-pass {
   display: flex;
@@ -1353,6 +1388,9 @@ h3 { font-size: 1.15rem; }
   .debug-only,
   .xml-secondary-details,
   .card--xml-secondary { display: none !important; }
+  /* Fix steps always expanded/visible in print */
+  .fix-steps, .fix-steps__list, .fix-steps__item { display: revert; }
+  .fix-steps__list { page-break-inside: avoid; }
 }
 
 /* —— AssistantPanel engine badges & warnings —— */

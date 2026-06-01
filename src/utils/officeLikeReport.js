@@ -53,6 +53,131 @@ export const OFFICE_KEY_RECOMMENDATION = {
   noHeadings:           'החילו סגנונות כותרת מובנים של Word כמו Heading 1, Heading 2 ו-Heading 3 במקום עיצוב ידני.',
 }
 
+export const OFFICE_KEY_IMPACT = {
+  missingAltText:       'משתמשי קוראי מסך לא יוכלו להבין את תוכן התמונה. עיוורים ולקויי ראייה יפספסו מידע חיוני המוצג באמצעות תמונות, תרשימים ואיורים.',
+  contrast:             'טקסט עם ניגודיות נמוכה קשה לקריאה לאנשים עם לקויות ראייה, ראייה מוחלשת או עיוורון צבעים.',
+  mediaCaptions:        'תוכן אודיו ווידאו ללא כתוביות אינו נגיש לחרשים, לכבדי שמיעה ולמשתמשים בסביבות ללא קול.',
+  tableHeader:          'טבלה ללא שורת כותרת מונעת מקוראי מסך לקשר בין הנתונים לכותרות העמודות, ומקשה על הבנת ההקשר.',
+  mergedCells:          'תאים ממוזגים משבשים את סדר הקריאה הלינארי של קוראי מסך ומקשים על ניווט ופרשנות הטבלה.',
+  missingSlideTitle:    'קוראי מסך לא יכולים לנווט בין שקופיות ללא כותרת; משתמשים עם מוגבלות לא ידעו היכן הם נמצאים במצגת.',
+  duplicateSlideTitle:  'כותרות כפולות מבלבלות משתמשי קוראי מסך שמנווטים לפי שמות שקופיות ברשימת תוכן.',
+  readingOrder:         'סדר קריאה שגוי גורם לקוראי מסך להציג את תוכן השקופית בסדר לא הגיוני, מה שמוביל לאי-הבנה.',
+  unclearHyperlinkText: 'קישורים עם טקסט כמו "לחצו כאן" אינם מתארים את היעד. משתמשי קוראי מסך המנווטים לפי רשימת קישורים לא ידעו לאן מוביל הקישור.',
+  documentTitle:        'מסמך ללא כותרת בנכסי הקובץ קשה לזיהוי על ידי טכנולוגיות סיוע, דפדפנים ומנהלי קבצים.',
+  noHeadings:           'מסמך ללא כותרות מונע מקוראי מסך לנווט בין חלקי התוכן ולהבין את מבנה המסמך; כל התוכן מוצג כגוש טקסט אחד רציף.',
+  sheetName:            'שמות גיליונות כמו "Sheet1" אינם מתארים את תוכן הגיליון. משתמשי קוראי מסך לא ידעו לאיזה גיליון לעבור.',
+  restrictedAccess:     'הגבלות מסמך עלולות למנוע מטכנולוגיות סיוע לגשת לתוכן, לקרוא אותו בקול או לנווט בו.',
+}
+
+export const OFFICE_KEY_WCAG = {
+  missingAltText:       '1.1.1 Non-text Content · Level A',
+  contrast:             '1.4.3 Contrast (Minimum) · Level AA',
+  mediaCaptions:        '1.2.2 Captions (Prerecorded) · Level A',
+  tableHeader:          '1.3.1 Info and Relationships · Level A',
+  mergedCells:          '1.3.1 Info and Relationships · Level A',
+  missingSlideTitle:    '2.4.2 Page Titled · Level A',
+  duplicateSlideTitle:  '2.4.6 Headings and Labels · Level AA',
+  readingOrder:         '1.3.2 Meaningful Sequence · Level A',
+  unclearHyperlinkText: '2.4.4 Link Purpose (In Context) · Level A',
+  documentTitle:        '2.4.2 Page Titled · Level A',
+  noHeadings:           '2.4.6 Headings and Labels · Level AA',
+  sheetName:            '2.4.6 Headings and Labels · Level AA',
+  restrictedAccess:     '—',
+}
+
+export const OFFICE_KEY_FIX_STEPS = {
+  missingAltText: [
+    'לחצו לחיצה ימנית על התמונה ובחרו "Edit Alt Text" / "עריכת טקסט חלופי".',
+    'הזינו תיאור קצר ומדויק של מה שמוצג בתמונה.',
+    'אם התמונה דקורטיבית בלבד — סמנו "Mark as decorative" / "סמן כדקורטיבי".',
+    'לחצו OK ושמרו את הקובץ.',
+    'הריצו מחדש את בדיקת הנגישות לאימות התיקון.',
+  ],
+  contrast: [
+    'בחרו את הטקסט בעל הניגודיות הנמוכה.',
+    'שנו את צבע הטקסט לצבע כהה יותר (לדוגמה: שחור או אפור כהה על רקע בהיר).',
+    'ודאו יחס ניגודיות של 4.5:1 לפחות לטקסט רגיל, 3:1 לטקסט גדול (מעל 18pt).',
+    'השתמשו בכלי WebAIM Contrast Checker לבדיקת היחס.',
+    'הימנעו משילובי צבעים בעייתיים כמו צהוב על לבן, אפור בהיר על לבן.',
+  ],
+  mediaCaptions: [
+    'בחרו את קובץ האודיו/וידאו בשקופית.',
+    'הוסיפו כתוביות דרך Insert → Captions (אם הגרסה תומכת בכך).',
+    'לחלופין, צרו קובץ כתוביות SRT חיצוני ושמרו אותו לצד קובץ המצגת.',
+    'הוסיפו תמלול טקסטואלי מלא בשקופית שאחרי אובייקט המדיה.',
+  ],
+  tableHeader: [
+    'לחצו בתוך הטבלה.',
+    'עברו ל-Table Design (PowerPoint/Word) או Table Tools → Design (Excel).',
+    'סמנו את האפשרות "Header Row" / "שורת כותרת".',
+    'ודאו שהשורה הראשונה מכילה כותרות תיאוריות לכל עמודה.',
+    'שמרו ובדקו עם Accessibility Checker.',
+  ],
+  mergedCells: [
+    'אתרו את התאים הממוזגים — Accessibility Checker מציין את מיקומם.',
+    'בחרו את התא הממוזג.',
+    'לחצו לחיצה ימנית → "Unmerge Cells" / "בטל מיזוג תאים".',
+    'שקלו עיצוב חלופי שאינו מסתמך על מיזוג: שורות/עמודות קבוצות, צבע רקע, גבולות.',
+    'ודאו שהנתונים עדיין קריאים לאחר ביטול המיזוג.',
+  ],
+  missingSlideTitle: [
+    'עברו לשקופית ללא כותרת (מסומנת על ידי Accessibility Checker).',
+    'אם אין מסגרת כותרת — הוסיפו: Insert → Text Box → Title placeholder.',
+    'לחלופין, שנו את פריסת השקופית ל-Layout שכולל מסגרת כותרת.',
+    'הזינו כותרת ייחודית ומתארת לכל שקופית.',
+    'חזרו על הפעולה לכל שקופית שמסומנת כחסרת כותרת.',
+  ],
+  duplicateSlideTitle: [
+    'אתרו את השקופיות עם הכותרת הכפולה.',
+    'שנו כל כותרת כפולה לכותרת ייחודית שמתארת את תוכן השקופית הספציפית.',
+    'השתמשו בחלונית Slide Panel לניווט מהיר וסקירת כל הכותרות.',
+    'כותרות כמו "המשך", "עוד", "דוגמה" — הפכו לכותרות ספציפיות כמו "דוגמה: ניתוח נתונים".',
+  ],
+  readingOrder: [
+    'פתחו את חלונית Selection Pane: Home → Arrange → Selection Pane.',
+    'הסדר בחלונית מלמטה למעלה הוא סדר הקריאה בפועל.',
+    'גררו אובייקטים לסדר הנכון (תוכן ראשי קודם, הערות אחרונות).',
+    'ודאו שכל אובייקט בעל שם תיאורי (לחצו פעמיים על שמו בחלונית לשינוי).',
+    'הריצו Accessibility Checker לאימות.',
+  ],
+  unclearHyperlinkText: [
+    'בחרו את הקישור עם הטקסט הלא ברור.',
+    'לחצו לחיצה ימנית → Edit Hyperlink / עריכת היפר-קישור.',
+    'שנו את שדה "Text to display" לטקסט מתאר, לדוגמה: "מדריך נגישות דיגיטלית של W3C".',
+    'הימנעו מ: "לחצו כאן", "קישור", "פה", "כאן", URL גולמי.',
+    'שמרו ובדקו.',
+  ],
+  documentTitle: [
+    'פתחו File → Info.',
+    'לחצו על שדה "Title" תחת Properties → Add a title.',
+    'הזינו כותרת מסמך ברורה ומתארת את תוכן הקובץ.',
+    'שמרו את המסמך.',
+    'הריצו Accessibility Checker לאימות.',
+  ],
+  noHeadings: [
+    'סמנו את הטקסט המשמש ככותרת ראשית של סעיף.',
+    'עברו ל-Home → Styles.',
+    'בחרו "Heading 1" לכותרות ראשיות, "Heading 2" לכותרות משנה, "Heading 3" לרמה שלישית.',
+    'אל תשתמשו בהגדלת גופן, הדגשה ידנית או צבע במקום סגנונות Heading.',
+    'ודאו שישנה לפחות כותרת Heading 1 אחת במסמך.',
+    'הריצו Accessibility Checker לאימות.',
+  ],
+  sheetName: [
+    'לחצו לחיצה ימנית על לשונית הגיליון בתחתית חלון Excel.',
+    'בחרו "Rename" / "שנה שם".',
+    'הזינו שם תיאורי המשקף את תוכן הגיליון (לדוגמה: "מכירות Q1 2024", "נתוני עובדים").',
+    'הימנעו מ: "Sheet1", "Sheet2", "גיליון1".',
+    'חזרו על הפעולה לכל לשונית גיליון.',
+  ],
+  restrictedAccess: [
+    'פתחו File → Info → Protect Document / Workbook / Presentation.',
+    'בדקו אילו הגבלות הוגדרו (הצפנה, הגבלת עריכה, סיסמה).',
+    'הסירו הגבלות מיותרות שאינן נדרשות לאבטחה.',
+    'אם ההגבלות הכרחיות — ודאו שהן אינן חוסמות טכנולוגיות סיוע כמו NVDA, JAWS.',
+    'שמרו ובדקו עם קורא מסך.',
+  ],
+}
+
 export const OFFICE_REPORT_GROUPS = [
   { label: 'צבע וניגודיות',  keys: ['contrast'] },
   { label: 'מדיה ואיורים',   keys: ['missingAltText', 'mediaCaptions'] },
@@ -63,6 +188,20 @@ export const OFFICE_REPORT_GROUPS = [
   { label: 'קישורים וניווט', keys: ['unclearHyperlinkText'] },
   { label: 'גישה למסמך',     keys: ['restrictedAccess'] },
 ]
+
+/**
+ * Returns true for generic "Checked by Microsoft … Accessibility Checker." notes
+ * that come from the backend when a check passes.
+ * These should be suppressed inside individual warning cards — the engine is already
+ * shown once at the section level.
+ */
+export function isGenericCheckedByNote(note) {
+  if (!note) return false
+  return (
+    /נבדק על ידי Microsoft .* Accessibility Checker/i.test(note) ||
+    /Checked by Microsoft .* Accessibility Checker/i.test(note)
+  )
+}
 
 /**
  * Returns true when a scan result should use Office Engine data as the primary source.
@@ -162,6 +301,8 @@ export function buildOfficeEngineIssueRows(officeLikeSummary) {
       const status   = item.status
       const isManual = ['manual', 'partial', 'not_checked'].includes(status)
       if (!isManual && status === 'passed' && count === 0) continue
+      // Suppress generic "נבדק על ידי …" notes — engine is shown once at section level
+      const rawNote = item.note ?? null
       rows.push({
         key,
         label:          item.label,
@@ -170,7 +311,10 @@ export function buildOfficeEngineIssueRows(officeLikeSummary) {
         severity:       isManual ? 'manual' : (OFFICE_KEY_SEVERITY[key] ?? 'medium'),
         category:       group.label,
         recommendation: OFFICE_KEY_RECOMMENDATION[key] ?? '',
-        note:           item.note ?? null,
+        impact:         OFFICE_KEY_IMPACT[key]     ?? null,
+        wcag:           OFFICE_KEY_WCAG[key]        ?? null,
+        fixSteps:       OFFICE_KEY_FIX_STEPS[key]  ?? [],
+        note:           isGenericCheckedByNote(rawNote) ? null : rawNote,
       })
     }
   }

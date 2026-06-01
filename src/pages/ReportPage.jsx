@@ -26,6 +26,8 @@ const SEV_LABEL = { high: 'גבוהה', medium: 'בינונית', manual: 'בד�
 const DEBUG_SCAN = import.meta.env.VITE_ACCESSIOFFICE_DEBUG_SCAN === 'true'
 
 // ── Office Engine row card (print-friendly) ────────────────────────────────────
+// row carries: label, count, severity, category, recommendation, impact, wcag,
+//              fixSteps[], note (generic "נבדק על ידי" notes already stripped).
 function OfficeReportRow({ row }) {
   return (
     <article className="report-issue-card">
@@ -41,10 +43,36 @@ function OfficeReportRow({ row }) {
           <dt>קטגוריה</dt>
           <dd>{row.category}</dd>
         </div>
-        <div>
-          <dt>המלצה</dt>
-          <dd>{row.recommendation}</dd>
-        </div>
+        {row.impact && (
+          <div>
+            <dt>השפעה</dt>
+            <dd>{row.impact}</dd>
+          </div>
+        )}
+        {row.recommendation && (
+          <div>
+            <dt>המלצה</dt>
+            <dd>{row.recommendation}</dd>
+          </div>
+        )}
+        {row.wcag && row.wcag !== '—' && (
+          <div>
+            <dt><span dir="ltr">WCAG</span> · ת&quot;י&nbsp;5568</dt>
+            <dd dir="ltr" className="wcag-ltr">{row.wcag}</dd>
+          </div>
+        )}
+        {row.fixSteps?.length > 0 && (
+          <div className="fix-steps">
+            <dt className="fix-steps__title">שלבי תיקון</dt>
+            <dd>
+              <ol className="fix-steps__list">
+                {row.fixSteps.map((step, i) => (
+                  <li key={i} className="fix-steps__item">{step}</li>
+                ))}
+              </ol>
+            </dd>
+          </div>
+        )}
         {row.note && (
           <div>
             <dt>הערה</dt>
