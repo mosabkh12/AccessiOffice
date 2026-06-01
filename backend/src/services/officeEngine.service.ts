@@ -198,6 +198,9 @@ function buildWordWorkerOfficeLikeSummary(
   const docTitleCount  = cnt('documentTitle')
   const docTitleStatus = st('documentTitle', docTitleCount > 0 ? 'failed' : 'passed')
 
+  const noHeadingsCount  = cnt('noHeadings')
+  const noHeadingsStatus = st('noHeadings', noHeadingsCount > 0 ? 'failed' : 'passed')
+
   return {
     contrast: item(
       'ניגודיות טקסט קשה לקריאה',
@@ -245,6 +248,15 @@ function buildWordWorkerOfficeLikeSummary(
       'כותרת מסמך חסרה',
       docTitleStatus,
       docTitleCount,
+    ),
+
+    noHeadings: item(
+      'אין כותרות במסמך',
+      noHeadingsStatus,
+      noHeadingsCount,
+      noHeadingsStatus === 'passed'
+        ? 'נבדק על ידי Microsoft Word Accessibility Checker.'
+        : 'נבדק על ידי Microsoft Word Accessibility Checker.',
     ),
 
     restrictedAccess: item(

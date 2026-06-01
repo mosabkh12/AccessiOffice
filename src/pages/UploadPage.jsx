@@ -4,48 +4,29 @@ import Button from '../components/Button.jsx'
 import { useScan } from '../context/ScanContext.jsx'
 import { getFileType, safeFileName } from '../utils/api.js'
 
-const USER_TYPES = [
-  { value: 'author', label: 'מחבר/ת מסמך', desc: 'בדיקה לפני פרסום או שיתוף מסמך' },
-  { value: 'auditor', label: 'בודק/ת נגישות', desc: 'דוח מפורט לביקורת נגישות' },
-  { value: 'lecturer', label: 'מרצה / מוסד לימודי', desc: 'התאמה לחומרי הוראה ומצגות' },
-]
-
-const SCAN_TYPES = [
-  {
-    value: 'basic',
-    label: 'סריקה בסיסית',
-    desc: 'בדיקת בעיות נגישות נפוצות ומהירות.',
-  },
-  {
-    value: 'full',
-    label: 'סריקה מלאה',
-    desc: 'בדיקה מורחבת הכוללת ממצאים נוספים לפי סוג הקובץ.',
-  },
-]
-
-const FILE_BADGE = { docx: 'Word', pptx: 'PowerPoint', xlsx: 'Excel' }
-
-const ACCEPTED = '.docx,.pptx,.xlsx'
-
+const FILE_BADGE     = { docx: 'Word', pptx: 'PowerPoint', xlsx: 'Excel' }
+const ACCEPTED       = '.docx,.pptx,.xlsx'
 const WORKFLOW_STEPS = ['בחירת קובץ', 'הגדרת סריקה', 'הרצת בדיקה']
+
+// Fixed values sent to the API — not selectable by the user
+const DEFAULT_USER_TYPE = 'auditor'   // → 'accessibility-auditor' via USER_TYPE_TO_API
+const DEFAULT_SCAN_TYPE = 'full'
 
 export default function UploadPage() {
   const navigate = useNavigate()
   const { setScanData } = useScan()
   const inputRef = useRef(null)
 
-  const [file, setFile] = useState(null)
+  const [file, setFile]         = useState(null)
   const [dragOver, setDragOver] = useState(false)
-  const [userType, setUserType] = useState('author')
-  const [scanType, setScanType] = useState('basic')
-  const [error, setError] = useState('')
-  const [workflowStep, setWorkflowStep] = useState(1)
+  const [error, setError]       = useState('')
 
-  const fileType = file ? getFileType(file.name) : null
+  const fileType     = file ? getFileType(file.name) : null
+  // Step 1 while no file; once a file is chosen settings are pre-set so jump to step 3
+  const workflowStep = file ? 3 : 1
 
   function handleFile(selected) {
     setError('')
-    // Clear previous scan results so the new scan starts fresh
     setScanData(null)
     if (!selected) return
 
@@ -53,11 +34,9 @@ export default function UploadPage() {
     if (!type) {
       setError('סוג קובץ לא נתמך. העלו קובץ .docx, .pptx או .xlsx בלבד.')
       setFile(null)
-      setWorkflowStep(1)
       return
     }
     setFile(selected)
-    setWorkflowStep(2)
   }
 
   function onDrop(e) {
@@ -72,14 +51,13 @@ export default function UploadPage() {
       setError('יש לבחור קובץ לפני הסריקה.')
       return
     }
-
     setScanData({
       file,
       fileName: file.name,
       fileType: getFileType(file.name),
-      userType,
-      scanType,
-      results: null,
+      userType: DEFAULT_USER_TYPE,
+      scanType: DEFAULT_SCAN_TYPE,
+      results:  null,
     })
     navigate('/scan')
   }
@@ -88,14 +66,14 @@ export default function UploadPage() {
     <div className="page page-upload">
       <header className="page-header">
         <h1>התחלת סריקת נגישות</h1>
-        <p className="page-lead">העלו קובץ Office, בחרו סוג משתמש וסריקה, והפעילו את הבדיקה.</p>
+        <p className="page-lead">העלו קובץ Office והמערכת תפעיל את בדיקת הנגישות המתאימה אוטומטית.</p>
       </header>
 
       <ol className="workflow-indicator" aria-label="שלבי תהליך">
         {WORKFLOW_STEPS.map((label, i) => {
           const stepNum = i + 1
-          const active = workflowStep === stepNum
-          const done = workflowStep > stepNum
+          const active  = workflowStep === stepNum
+          const done    = workflowStep > stepNum
           return (
             <li
               key={label}
@@ -109,8 +87,11 @@ export default function UploadPage() {
       </ol>
 
       <form onSubmit={onSubmit} className="upload-form">
+
+        {/* ── Step 1: File selection ── */}
         <section className="card">
           <h2 className="card-title">1. בחירת קובץ</h2>
+
           <div
             className={`upload-zone${dragOver ? ' drag-over' : ''}${file ? ' has-file' : ''}`}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
@@ -148,69 +129,44 @@ export default function UploadPage() {
             />
           </div>
 
-          {error && (
-            <p className="form-error" role="alert">{error}</p>
-          )}
+          {error && <p className="form-error" role="alert">{error}</p>}
         </section>
 
+        {/* ── Step 2: Scan settings — fixed, non-interactive ── */}
         <section className="card">
           <h2 className="card-title">2. הגדרת סריקה</h2>
 
           <div className="form-section">
             <h3 className="form-label">סוג משתמש</h3>
-            <div className="option-cards" role="radiogroup" aria-label="סוג משתמש">
-              {USER_TYPES.map((opt) => (
-                <label
-                  key={opt.value}
-                  className={`option-card${userType === opt.value ? ' is-selected' : ''}`}
-                >
-                  <input
-                    type="radio"
-                    name="userType"
-                    value={opt.value}
-                    checked={userType === opt.value}
-                    onChange={() => { setUserType(opt.value); if (file) setWorkflowStep(2) }}
-                  />
-                  <span className="option-card__title">{opt.label}</span>
-                  <span className="option-card__desc">{opt.desc}</span>
-                </label>
-              ))}
+            <div className="option-cards">
+              <div className="option-card is-selected" style={{ cursor: 'default', pointerEvents: 'none' }}>
+                <span className="option-card__title">בודק/ת נגישות</span>
+                <span className="option-card__desc">דוח מפורט לבדיקות נגישות</span>
+              </div>
             </div>
           </div>
 
           <div className="form-section">
             <h3 className="form-label">סוג סריקה</h3>
-            <div className="option-cards" role="radiogroup" aria-label="סוג סריקה">
-              {SCAN_TYPES.map((opt) => (
-                <label
-                  key={opt.value}
-                  className={`option-card${scanType === opt.value ? ' is-selected' : ''}`}
-                >
-                  <input
-                    type="radio"
-                    name="scanType"
-                    value={opt.value}
-                    checked={scanType === opt.value}
-                    onChange={() => { setScanType(opt.value); if (file) setWorkflowStep(3) }}
-                  />
-                  <span className="option-card__title">{opt.label}</span>
-                  <span className="option-card__desc">{opt.desc}</span>
-                </label>
-              ))}
+            <div className="option-cards">
+              <div className="option-card is-selected" style={{ cursor: 'default', pointerEvents: 'none' }}>
+                <span className="option-card__title">סריקה מלאה</span>
+                <span className="option-card__desc">בדיקה מורחבת הכוללת ממצאים נוספים לפי סוג הקובץ</span>
+              </div>
             </div>
           </div>
         </section>
 
+        {/* ── Step 3: Run scan ── */}
         <section className="card card--actions">
           <h2 className="card-title">3. הרצת בדיקה</h2>
           <p className="card-hint">לאחר לחיצה, המערכת תעלה את הקובץ לשרת ותציג את תוצאות הסריקה.</p>
           <div className="btn-group">
-            <Button type="submit" disabled={!file}>
-              הפעלת סריקה
-            </Button>
+            <Button type="submit" disabled={!file}>הפעלת סריקה</Button>
             <Button to="/" variant="secondary">חזרה לדף הבית</Button>
           </div>
         </section>
+
       </form>
     </div>
   )

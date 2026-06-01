@@ -8,9 +8,6 @@ import { submitScan, safeFileName } from '../utils/api.js'
 const STEP_DELAY = 750
 const FILE_BADGE = { docx: 'Word', pptx: 'PowerPoint', xlsx: 'Excel' }
 
-// Extra step label shown only for PPTX — reflects the PowerPoint worker phase
-const PPTX_WORKER_STEP = 'בדיקה באמצעות Microsoft PowerPoint Accessibility Checker'
-
 export default function ScanProgressPage() {
   const navigate = useNavigate()
   const { scanData, setScanData } = useScan()
@@ -23,7 +20,7 @@ export default function ScanProgressPage() {
   const scanFileKey = useRef(null)
 
   const isPptx = scanData?.fileType === 'pptx'
-  const steps  = isPptx ? [...SCAN_STEPS, PPTX_WORKER_STEP] : SCAN_STEPS
+  const steps  = SCAN_STEPS
 
   // ── Main scan effect ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -155,14 +152,14 @@ export default function ScanProgressPage() {
           })}
         </ol>
 
-        {/* Shown when animation is done but the PowerPoint worker is still running */}
-        {waitingForWorker && isPptx && (
+        {/* Waiting indicator when animation finishes before the API responds */}
+        {waitingForWorker && (
           <div className="scan-ppt-waiting" role="status" aria-live="polite">
             <span className="scan-ppt-waiting__icon" aria-hidden="true">⏳</span>
             <span className="scan-ppt-waiting__text">
-              בודק באמצעות Microsoft PowerPoint Accessibility Checker...
+              מסיים ניתוח...
               <br />
-              <small>שלב זה עשוי לקחת עד 45 שניות.</small>
+              <small>עוד רגע קט.</small>
             </span>
           </div>
         )}

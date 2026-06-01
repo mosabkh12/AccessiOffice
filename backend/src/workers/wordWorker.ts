@@ -44,7 +44,7 @@ export interface WordWorkerSuccess {
   /**
    * Explicit pass/fail/manual status for checked keys.
    * Keys: missingAltText | contrast | tableHeader | mergedCells |
-   *       unclearHyperlinkText | documentTitle | restrictedAccess
+   *       unclearHyperlinkText | documentTitle | noHeadings | restrictedAccess
    */
   statuses: Record<string, string>
   /** Raw UIAutomation text collected from the pane (capped at 200 entries) */

@@ -119,6 +119,8 @@ function Test-PaneReady {
         'Merged or split cells',
         'Unclear hyperlink',
         'Document title',
+        'No headings in document',
+        'No headings',
         'Looks good! No issues found.',
         'No issues found'
     )
@@ -146,6 +148,7 @@ function Parse-CheckerTexts([bool]$Trace = $false) {
         mergedCells          = 'Merged (?:or Split )?[Cc]ells|Split [Cc]ells|Use of [Mm]erged'
         unclearHyperlinkText = 'Unclear [Hh]yperlink [Tt]ext|Unclear [Ll]ink [Tt]ext|Unclear [Hh]yperlink'
         documentTitle        = '(?:Missing )?[Dd]ocument [Tt]itle|No [Dd]ocument [Tt]itle'
+        noHeadings           = 'No [Hh]eadings?(?: in [Dd]ocument)?|Missing [Hh]eadings?|אין כותרות'
         restrictedAccess     = 'Restricted [Aa]ccess|Document [Rr]estrictions?'
     }
 
@@ -225,7 +228,7 @@ function Parse-CheckerTexts([bool]$Trace = $false) {
     }
 
     # Build statuses from counts
-    $autoStatusKeys = @('missingAltText', 'contrast', 'tableHeader', 'mergedCells', 'unclearHyperlinkText', 'documentTitle')
+    $autoStatusKeys = @('missingAltText', 'contrast', 'tableHeader', 'mergedCells', 'unclearHyperlinkText', 'documentTitle', 'noHeadings')
     foreach ($sk in $autoStatusKeys) {
         $statuses[$sk] = if ($counts.Contains($sk) -and $counts[$sk] -gt 0) { 'failed' } else { 'passed' }
     }
