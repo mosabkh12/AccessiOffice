@@ -27,6 +27,19 @@ function releaseSlot(): void {
 
 // ── Public result types ───────────────────────────────────────────────────────
 
+/** A single occurrence extracted by invoking pane elements + reading COM state. */
+export interface PptxOccurrence {
+  index: number
+  key: string
+  slideNumber: number
+  objectName: string
+  shapeId: number
+  shapeType?: string
+  /** Hebrew display string: "שקופית N · ShapeName" */
+  location: string
+  source: 'Microsoft PowerPoint Accessibility Checker'
+}
+
 export interface WorkerSuccess {
   ok: true
   /** Always 'powerpoint-ui-automation' */
@@ -42,6 +55,12 @@ export interface WorkerSuccess {
    * Keys: contrast | mediaCaptions | missingTableHeader | mergedCells
    */
   statuses: Record<string, string>
+  /** Structured per-occurrence data extracted via UIAutomation invoke + COM read. */
+  occurrences?: Record<string, PptxOccurrence[]>
+  /** true when at least one category yielded invokable occurrence elements. */
+  occurrencesExtracted?: boolean
+  /** Explanation when occurrencesExtracted is false. */
+  occurrencesNote?: string | null
   /** Raw UIAutomation text collected from the pane (capped at 200 entries) */
   rawOfficeText: string[]
 }

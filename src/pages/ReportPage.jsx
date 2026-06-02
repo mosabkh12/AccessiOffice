@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Button from '../components/Button.jsx'
 import ScoreRing from '../components/ScoreRing.jsx'
@@ -9,6 +9,8 @@ import {
   buildOfficeEngineSummary,
   calculateOfficeEngineScore,
   buildOfficeEngineIssueRows,
+  formatOccurrenceLocation,
+  getShapeTypeHint,
 } from '../utils/officeLikeReport.js'
 
 const USER_LABELS = {
@@ -25,10 +27,63 @@ const CRITICAL_DEFAULT =
 const SEV_LABEL = { high: 'גבוהה', medium: 'בינונית', manual: 'בדיקה ידנית', low: 'נמוכה' }
 const DEBUG_SCAN = import.meta.env.VITE_ACCESSIOFFICE_DEBUG_SCAN === 'true'
 
+// ── Occurrence card (report / print version — all details visible by default) ──
+// Collapsible on screen; body always visible in print (via CSS).
+function ReportOccurrenceCard({ index, total, location, impact, recommendation, wcag, fixSteps }) {
+  const [isOpen, setIsOpen]  = useState(false)
+  const displayLoc = formatOccurrenceLocation(location)
+  const hint       = getShapeTypeHint(location)
+
+  return (
+    <article className={`occ-card occ-card--report${isOpen ? ' occ-card--open' : ''}`}>
+      <button
+        className="occ-card__row"
+        type="button"
+        onClick={() => setIsOpen(v => !v)}
+        aria-expanded={isOpen}
+      >
+        <span className="occ-card__num">{index + 1} / {total}</span>
+        <span className="occ-card__loc">{displayLoc}</span>
+        <span className="occ-card__toggle no-print" aria-hidden="true">
+          {isOpen ? '▲' : '▼'} פירוט
+        </span>
+      </button>
+
+      {/* occ-card__details--hidden is overridden to display:block in @media print */}
+      <div className={`occ-card__details${isOpen ? '' : ' occ-card__details--hidden'}`}>
+        {hint && <p className="occ-card__hint">{hint}</p>}
+        <dl className="occ-card__body">
+          {impact && <div><dt>השפעה</dt><dd>{impact}</dd></div>}
+          {recommendation && <div><dt>המלצה</dt><dd>{recommendation}</dd></div>}
+          {wcag && wcag !== '—' && (
+            <div>
+              <dt><span dir="ltr">WCAG</span> · ת&quot;י&nbsp;5568</dt>
+              <dd dir="ltr" className="wcag-ltr">{wcag}</dd>
+            </div>
+          )}
+          {fixSteps?.length > 0 && (
+            <div className="occ-fix-row">
+              <dt>שלבי תיקון</dt>
+              <dd>
+                <ol className="fix-steps__list">
+                  {fixSteps.map((s, i) => <li key={i} className="fix-steps__item">{s}</li>)}
+                </ol>
+              </dd>
+            </div>
+          )}
+        </dl>
+      </div>
+    </article>
+  )
+}
+
 // ── Office Engine row card (print-friendly) ────────────────────────────────────
 // row carries: label, count, severity, category, recommendation, impact, wcag,
-//              fixSteps[], note (generic "נבדק על ידי" notes already stripped).
+//              fixSteps[], locations[], note.
+// When locations are present → one card per occurrence.
+// When absent   → honest "could not extract" message + general fix steps.
 function OfficeReportRow({ row }) {
+  const locations = row.locations ?? []
   return (
     <article className="report-issue-card">
       <header className="report-issue-card__header">
@@ -38,48 +93,55 @@ function OfficeReportRow({ row }) {
         </h4>
         <span className={`severity-tag ${row.severity}`}>{SEV_LABEL[row.severity]}</span>
       </header>
-      <dl className="report-issue-card__body">
-        <div>
-          <dt>קטגוריה</dt>
-          <dd>{row.category}</dd>
+
+      <p className="report-issue-card__category">{row.category}</p>
+
+      {locations.length > 0 ? (
+        <div className="occ-list occ-list--report">
+          {locations.map((loc, i) => (
+            <ReportOccurrenceCard
+              key={i}
+              index={i}
+              total={row.count}
+              location={loc}
+              impact={row.impact}
+              recommendation={row.recommendation}
+              wcag={row.wcag}
+              fixSteps={row.fixSteps}
+            />
+          ))}
+          {row.count > locations.length && (
+            <p className="occ-more">
+              רק {locations.length} מתוך {row.count} מיקומים מדויקים חולצו.
+              {' '}פתחו את הקובץ לרשימה המלאה.
+            </p>
+          )}
         </div>
-        {row.impact && (
-          <div>
-            <dt>השפעה</dt>
-            <dd>{row.impact}</dd>
-          </div>
-        )}
-        {row.recommendation && (
-          <div>
-            <dt>המלצה</dt>
-            <dd>{row.recommendation}</dd>
-          </div>
-        )}
-        {row.wcag && row.wcag !== '—' && (
-          <div>
-            <dt><span dir="ltr">WCAG</span> · ת&quot;י&nbsp;5568</dt>
-            <dd dir="ltr" className="wcag-ltr">{row.wcag}</dd>
-          </div>
-        )}
-        {row.fixSteps?.length > 0 && (
-          <div className="fix-steps">
-            <dt className="fix-steps__title">שלבי תיקון</dt>
-            <dd>
-              <ol className="fix-steps__list">
-                {row.fixSteps.map((step, i) => (
-                  <li key={i} className="fix-steps__item">{step}</li>
-                ))}
-              </ol>
-            </dd>
-          </div>
-        )}
-        {row.note && (
-          <div>
-            <dt>הערה</dt>
-            <dd>{row.note}</dd>
-          </div>
-        )}
-      </dl>
+      ) : (
+        <div className="occ-no-locs occ-no-locs--report">
+          <dl className="occ-card__body">
+            {row.impact && <div><dt>השפעה</dt><dd>{row.impact}</dd></div>}
+            {row.recommendation && <div><dt>המלצה</dt><dd>{row.recommendation}</dd></div>}
+            {row.wcag && row.wcag !== '—' && (
+              <div>
+                <dt><span dir="ltr">WCAG</span> · ת&quot;י&nbsp;5568</dt>
+                <dd dir="ltr" className="wcag-ltr">{row.wcag}</dd>
+              </div>
+            )}
+            {row.fixSteps?.length > 0 && (
+              <div className="occ-fix-row">
+                <dt>שלבי תיקון</dt>
+                <dd>
+                  <ol className="fix-steps__list">
+                    {row.fixSteps.map((s, i) => <li key={i} className="fix-steps__item">{s}</li>)}
+                  </ol>
+                </dd>
+              </div>
+            )}
+          </dl>
+          <p className="occ-no-locs__hint">מיקומים מדויקים לא זמינים.</p>
+        </div>
+      )}
     </article>
   )
 }
@@ -122,15 +184,6 @@ export default function ReportPage() {
 
   const isOffice = isOfficeEngineResult(results)
 
-  // Human-readable engine name used across several labels
-  const engineName = isOffice
-    ? (fileType === 'docx'
-        ? 'Microsoft Word Accessibility Checker'
-        : fileType === 'xlsx'
-          ? 'Microsoft Excel Accessibility Checker'
-          : 'Microsoft PowerPoint Accessibility Checker')
-    : null
-
   // Office Engine derived values — computed only when relevant
   const officeSummary = isOffice ? buildOfficeEngineSummary(officeLikeSummary) : null
   const officeScore   = isOffice ? calculateOfficeEngineScore(officeLikeSummary) : null
@@ -155,9 +208,7 @@ export default function ReportPage() {
       <article className="card report-document">
         <header className="report-header">
           <h1>דוח נגישות – AccessiOffice</h1>
-          <p className="report-subtitle">
-            {isOffice ? `מבוסס על ${engineName}` : 'בודק נגישות לקבצי Office'}
-          </p>
+          <p className="report-subtitle">בודק נגישות לקבצי Office</p>
         </header>
 
         <dl className="report-meta">
@@ -185,12 +236,6 @@ export default function ReportPage() {
             <dt>תקן</dt>
             <dd><span className="wcag-ltr" dir="ltr">WCAG 2.1</span> · ת&quot;י 5568</dd>
           </div>
-          {isOffice && (
-            <div>
-              <dt>מנוע בדיקה</dt>
-              <dd>{engineName}</dd>
-            </div>
-          )}
         </dl>
 
         {/* ── Score ── */}
@@ -199,11 +244,6 @@ export default function ReportPage() {
           <p className="report-score-text">
             <strong>ציון נגישות: {displayScore}/100</strong>
           </p>
-          {isOffice && (
-            <p className="report-score-source">
-              הציון מחושב על בסיס ממצאי {engineName}
-            </p>
-          )}
         </section>
 
         {/* ══════════════════════════════════════════════════════════════════════
@@ -213,7 +253,7 @@ export default function ReportPage() {
           <>
             {/* Summary */}
             <section className="report-section">
-              <h3>סיכום ממצאים — {engineName}</h3>
+              <h3>סיכום ממצאים</h3>
               <ul className="severity-summary-list">
                 <li>
                   <span className="severity-tag high">גבוהה</span>

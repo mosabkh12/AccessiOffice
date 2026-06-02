@@ -122,19 +122,7 @@ export default function ResultsPage() {
         <div className="worker-fallback-banner" role="alert" dir="rtl">
           <span className="worker-fallback-banner__icon" aria-hidden="true">⚠</span>
           <span className="worker-fallback-banner__text">
-            {fileType === 'docx'
-              ? 'מנוע Microsoft Word לא היה זמין — הנתונים מבוססים על ניתוח XML/WCAG.'
-              : fileType === 'xlsx'
-                ? 'מנוע Microsoft Excel לא היה זמין — הנתונים מבוססים על ניתוח XML/WCAG.'
-                : 'מנוע Microsoft PowerPoint לא היה זמין — הנתונים מבוססים על ניתוח XML/WCAG.'}
-            {' '}
-            <span className="worker-fallback-banner__detail" dir="ltr">
-              {fileType === 'docx'
-                ? '(Word engine failed — XML/WCAG fallback used)'
-                : fileType === 'xlsx'
-                  ? '(Excel engine failed — XML/WCAG fallback used)'
-                  : '(PowerPoint engine failed — XML/WCAG fallback used)'}
-            </span>
+            הנתונים מבוססים על ניתוח XML/WCAG.
           </span>
         </div>
       )}
@@ -155,15 +143,9 @@ export default function ResultsPage() {
           <ScoreRing score={displayScore} />
           <p className="stat-label">ציון נגישות</p>
           <p className="stat-sublabel">מתוך 100</p>
-          <p className="stat-score-source">
-            {isOffice
-              ? (fileType === 'docx'
-                  ? 'Word Accessibility Checker'
-                  : fileType === 'xlsx'
-                    ? 'Excel Accessibility Checker'
-                    : 'PowerPoint Accessibility Checker')
-              : 'XML/WCAG'}
-          </p>
+          {!isOffice && (
+            <p className="stat-score-source">XML/WCAG</p>
+          )}
         </article>
 
         <article className="card stat-card">
@@ -192,15 +174,6 @@ export default function ResultsPage() {
 
       {/* ── Card A: Accessibility Assistant checklist ─────────────────────────── */}
       <section className="card card--assistant">
-        {isOffice && (
-          <p className="card-section-source">
-            {fileType === 'docx'
-              ? 'מסייע נגישות — תצוגת Word'
-              : fileType === 'xlsx'
-                ? 'מסייע נגישות — תצוגת Excel'
-                : 'מסייע נגישות — תצוגת PowerPoint'}
-          </p>
-        )}
         <AssistantPanel
           issues={isOffice ? [] : issues}
           quickFix={isOffice ? [] : quickFix}
@@ -217,13 +190,6 @@ export default function ResultsPage() {
       {/* ── Card B: Office Engine grouped report table (office-engine only) ──── */}
       {isOffice && (
         <section className="card card--office-report">
-          <p className="card-section-source office-source-badge">
-            {fileType === 'docx'
-              ? 'מופעל על ידי Microsoft Word Accessibility Checker'
-              : fileType === 'xlsx'
-                ? 'מופעל על ידי Microsoft Excel Accessibility Checker'
-                : 'מופעל על ידי Microsoft PowerPoint Accessibility Checker'}
-          </p>
           <OfficeEngineReportTable officeLikeSummary={officeLikeSummary} />
         </section>
       )}

@@ -4,6 +4,149 @@
  * All calculations are derived at runtime from officeLikeSummary — never hardcoded.
  */
 
+// ── Occurrence location formatting ────────────────────────────────────────────
+// Maps English PowerPoint/Word/Excel shape-type names to Hebrew display labels.
+const SHAPE_EN_TO_HE = {
+  'Picture':              'תמונה',
+  'Freeform':             'אובייקט ציור',
+  'Group':                'קבוצת אובייקטים',
+  'Rectangle':            'צורה',
+  'RoundedRectangle':     'צורה מעוגלת',
+  'Oval':                 'עיגול',
+  'Triangle':             'משולש',
+  'TextBox':              'תיבת טקסט',
+  'Table':                'טבלה',
+  'Chart':                'תרשים',
+  'SmartArt Graphic':     'SmartArt',
+  'SmartArt':             'SmartArt',
+  'Shape':                'צורה',
+  'Line':                 'קו',
+  'Connector':            'מחבר',
+  'Diamond':              'יהלום',
+  'Placeholder':          'מסגרת תוכן',
+  'MediaObject':          'אובייקט מדיה',
+  'Hyperlink':            'קישור',
+  'Picture Placeholder':  'מסגרת תמונה',
+}
+
+// Extra hint shown inside an expanded occurrence for shape types that need explanation.
+const SHAPE_TYPE_HINTS = {
+  freeform: 'אובייקט ציור הוא צורה או רכיב גרפי שנוצר בתוך PowerPoint.',
+  group:    'קבוצת אובייקטים היא כמה צורות/תמונות שמקובצות יחד.',
+}
+
+/**
+ * Translate an English shape/object name from COM into a Hebrew display string.
+ * "Freeform 4" → "אובייקט ציור 4",  "Picture 3" → "תמונה 3"
+ */
+function translateShapeName(name) {
+  if (!name) return name
+  // Strip technical row/col suffixes like "(Row 2 Col 3)"
+  const cleaned = name.replace(/\s*\(Row\s+\d+\s+Col\s+\d+\).*$/, '').trim()
+  // Try longest-match first so "SmartArt Graphic" beats "SmartArt"
+  const keys = Object.keys(SHAPE_EN_TO_HE).sort((a, b) => b.length - a.length)
+  for (const eng of keys) {
+    const re = new RegExp(`^${eng.replace(/\s+/, '\\s+')}(\\s+\\d+)?$`, 'i')
+    const m  = cleaned.match(re)
+    if (m) return `${SHAPE_EN_TO_HE[eng]}${m[1] ?? ''}`
+  }
+  return cleaned
+}
+
+/**
+ * Returns true when a location or name string contains garbled/corrupted text
+ * (question-mark runs or Unicode replacement characters).
+ * Used to decide whether to fall back to a sheet index.
+ */
+export function isCorruptedText(value) {
+  if (!value || typeof value !== 'string') return true
+  if (/\?{2,}/.test(value)) return true   // ????? pattern
+  if (/�/.test(value)) return true   // Unicode replacement char (�)
+  return false
+}
+
+/**
+ * Convert a raw ASCII location string from the Office worker into a
+ * user-friendly Hebrew display string.
+ *
+ * Input formats (from PS scripts):
+ *   "Slide N - ShapeName"     → "שקופית N · translated"      (PPTX)
+ *   "Slide N"                 → "שקופית N"
+ *   "Page N - ObjectName"     → "עמוד N · translated"        (DOCX)
+ *   "Entire document - ..."   → "כל המסמך"
+ *   "Sheet N - Range A1:B1"  → "גיליון N · טווח A1:B1"      (XLSX — N is sheet index)
+ *   "Sheet N - ObjectName"   → "גיליון N · translated"
+ *   "Sheet N"                → "גיליון N"
+ *
+ * Corrupted text (?????, replacement chars) is detected and replaced
+ * with a neutral fallback so the UI never shows garbage.
+ */
+export function formatOccurrenceLocation(loc) {
+  if (!loc) return ''
+
+  // Reject entirely corrupted strings before any parsing
+  if (isCorruptedText(loc)) return 'מיקום לא זמין'
+
+  // PPTX — "Slide N - ObjectName"
+  let m = loc.match(/^Slide\s+(\d+)\s+-\s+(.+)$/)
+  if (m) return `שקופית ${m[1]} · ${translateShapeName(m[2])}`
+
+  // PPTX — "Slide N" only
+  m = loc.match(/^Slide\s+(\d+)$/)
+  if (m) return `שקופית ${m[1]}`
+
+  // DOCX — "Page N - ObjectName"
+  m = loc.match(/^Page\s+(\d+)\s+-\s+(.+)$/)
+  if (m) return `עמוד ${m[1]} · ${translateShapeName(m[2])}`
+
+  // DOCX — "Entire document ..."
+  if (loc.startsWith('Entire document')) return 'כל המסמך'
+
+  // XLSX — "Sheet N - Range A1:B1"  (N is always a sheet index number from the PS script)
+  m = loc.match(/^Sheet\s+(\d+)\s+-\s+Range\s+(.+)$/)
+  if (m) return `גיליון ${m[1]} · טווח ${m[2]}`
+
+  // XLSX — "Sheet N - Range A1:B1"  (non-numeric sheet label, legacy)
+  m = loc.match(/^Sheet\s+(.+?)\s+-\s+Range\s+(.+)$/)
+  if (m) {
+    const label = isCorruptedText(m[1]) ? '?' : m[1]
+    return `גיליון ${label} · טווח ${m[2]}`
+  }
+
+  // XLSX — "Sheet N - ObjectName"
+  m = loc.match(/^Sheet\s+(\d+)\s+-\s+(.+)$/)
+  if (m) return `גיליון ${m[1]} · ${translateShapeName(m[2])}`
+
+  // XLSX — "Sheet X - ObjectName"  (non-numeric, legacy)
+  m = loc.match(/^Sheet\s+(.+?)\s+-\s+(.+)$/)
+  if (m) {
+    const label = isCorruptedText(m[1]) ? '?' : m[1]
+    return `גיליון ${label} · ${translateShapeName(m[2])}`
+  }
+
+  // XLSX — "Sheet N" (index only)
+  m = loc.match(/^Sheet\s+(\d+)$/)
+  if (m) return `גיליון ${m[1]}`
+
+  // XLSX — "Sheet X" (name, non-numeric)
+  m = loc.match(/^Sheet\s+(.+)$/)
+  if (m) return isCorruptedText(m[1]) ? 'גיליון' : `גיליון ${m[1]}`
+
+  return isCorruptedText(loc) ? 'מיקום לא זמין' : loc
+}
+
+/**
+ * Returns a helpful Hebrew hint for shape types that users might not recognise.
+ * Keyed from the raw (untranslated) location string.
+ */
+export function getShapeTypeHint(loc) {
+  if (!loc) return null
+  const lower = loc.toLowerCase()
+  if (lower.includes('freeform')) return SHAPE_TYPE_HINTS.freeform
+  if (/\bgroup\b/.test(lower))   return SHAPE_TYPE_HINTS.group
+  return null
+}
+
 // Severity classification used in buildOfficeEngineSummary counting
 // PPTX keys: missingAltText, contrast, mediaCaptions, missingSlideTitle, duplicateSlideTitle, tableHeader, mergedCells
 // DOCX keys: missingAltText, contrast, tableHeader, mergedCells, unclearHyperlinkText, documentTitle
@@ -301,12 +444,12 @@ export function buildOfficeEngineIssueRows(officeLikeSummary) {
       const status   = item.status
       const isManual = ['manual', 'partial', 'not_checked'].includes(status)
       if (!isManual && status === 'passed' && count === 0) continue
-      // Suppress generic "נבדק על ידי …" notes — engine is shown once at section level
       const rawNote = item.note ?? null
       rows.push({
         key,
         label:          item.label,
         count,
+        locations:      item.locations ?? [],
         status,
         severity:       isManual ? 'manual' : (OFFICE_KEY_SEVERITY[key] ?? 'medium'),
         category:       group.label,

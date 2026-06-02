@@ -26,6 +26,10 @@
 #>
 param([Parameter(Mandatory=$true)][string]$FilePath)
 
+# Force UTF-8 on stdout so Hebrew/non-ASCII sheet names in JSON are not corrupted.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding            = [System.Text.Encoding]::UTF8
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -134,9 +138,10 @@ function Test-PaneReady {
 # Parser with optional trace
 # --------------------------------------------------------------------------
 function Parse-CheckerTexts([bool]$Trace = $false) {
-    $counts     = [ordered]@{}
-    $statuses   = [ordered]@{}
-    $parseTrace = [System.Collections.Generic.List[object]]::new()
+    $counts         = [ordered]@{}
+    $statuses       = [ordered]@{}
+    $labelPositions = [ordered]@{}
+    $parseTrace     = [System.Collections.Generic.List[object]]::new()
 
     # Keys are the final officeLikeSummary key names
     $ruleMap = [ordered]@{
@@ -170,6 +175,7 @@ function Parse-CheckerTexts([bool]$Trace = $false) {
                 $n = [int]$next
                 if ($n -gt 0) { $counts[$key] = $n }
                 $found = $true
+                if (-not $labelPositions.Contains($key)) { $labelPositions[$key] = $i }
                 if ($Trace) {
                     $parseTrace.Add([ordered]@{
                         key = $key; pass = 1; sourceFormat = 'adjacent-label-count'
@@ -231,7 +237,153 @@ function Parse-CheckerTexts([bool]$Trace = $false) {
     }
     $statuses['restrictedAccess'] = 'manual'   # always manual - not exposed through this pane path
 
-    return [PSCustomObject]@{ counts = $counts; statuses = $statuses; parseTrace = $parseTrace }
+    # -- Pass 3: Per-occurrence item extraction -----------------------------------
+    $occurrences    = [ordered]@{}
+    $sortedLabelKeys = @($labelPositions.Keys | Sort-Object { $labelPositions[$_] })
+
+    for ($ki = 0; $ki -lt $sortedLabelKeys.Count; $ki++) {
+        $key    = $sortedLabelKeys[$ki]
+        $catPos = $labelPositions[$key]
+        $count  = if ($counts.Contains($key)) { [int]$counts[$key] } else { 0 }
+        if ($count -le 0) { continue }
+
+        $rangeEnd = $textLen
+        if ($ki + 1 -lt $sortedLabelKeys.Count) {
+            $nk = $sortedLabelKeys[$ki + 1]; $np = $labelPositions[$nk]
+            if ($np -gt $catPos) { $rangeEnd = $np }
+        }
+
+        $maxItems = [Math]::Min($count, 15)
+        $itemList = [System.Collections.Generic.List[string]]::new()
+
+        for ($j = ($catPos + 2); $j -lt $rangeEnd -and $itemList.Count -lt $maxItems; $j++) {
+            if ($j -ge $textLen) { break }
+            $t = $textArr[$j]
+            if (-not $t -or $t.Length -lt 2 -or $t.Length -gt 150) { continue }
+            if ($t -match '^\d+$') { continue }
+            if ($t.Length -le 3 -and [int][char]$t[0] -ge 0x2600) { continue }
+            if ($t -match '^(?:Errors?|Warnings?|Tips?|Inspection Results|Accessibility Checker|Accessibility Assistant|Looks good|No issues|Check)') { continue }
+            $hitCat = $false
+            foreach ($re in $ruleMap.GetEnumerator()) {
+                if (-not [regex]::IsMatch($t, '\d') -and [regex]::IsMatch($t, "(?:$($re.Value))", $ignCase)) { $hitCat = $true; break }
+            }
+            if ($hitCat) { break }
+            [void]$itemList.Add($t)
+        }
+
+        if ($itemList.Count -gt 0) { $occurrences[$key] = $itemList.ToArray() }
+    }
+
+    return [PSCustomObject]@{ counts = $counts; statuses = $statuses; parseTrace = $parseTrace; occurrences = $occurrences }
+}
+
+# --------------------------------------------------------------------------
+# COM-based occurrence enumeration for Excel
+# --------------------------------------------------------------------------
+function Get-Excel-COMOccurrences {
+    param([object]$Wb, $Counts, [bool]$Debug)
+
+    $occ = [ordered]@{}
+    try {   # top-level guard
+
+    # ── Merged cells ──────────────────────────────────────────────────────────
+    if ($Counts.Contains('mergedCells') -and [int]$Counts['mergedCells'] -gt 0) {
+        $target = [int]$Counts['mergedCells']
+        $items  = [System.Collections.Generic.List[object]]::new()
+        $seen   = [System.Collections.Generic.HashSet[string]]::new()
+
+        foreach ($sheet in $Wb.Worksheets) {
+            if ($items.Count -ge $target) { break }
+            $sname  = try { $sheet.Name }  catch { '' }
+            $sindex = try { [int]$sheet.Index } catch { 0 }
+            $used   = try { $sheet.UsedRange } catch { $null }
+            if ($null -eq $used) { continue }
+            try {
+                foreach ($cell in $used.Cells) {
+                    if ($items.Count -ge $target) { break }
+                    try {
+                        if (-not $cell.MergeCells) { continue }
+                        $area  = $cell.MergeArea
+                        $addr  = try { $area.Address($false, $false) } catch { '' }
+                        $first = try { $area.Cells.Item(1,1).Address($false,$false) } catch { '' }
+                        $cellA = try { $cell.Address($false,$false) } catch { '' }
+                        if ($cellA -ne $first) { continue }   # Count each merged area once
+                        $dk = "$sindex|$addr"
+                        if ($seen.Contains($dk)) { continue }
+                        [void]$seen.Add($dk)
+                        # location uses sheetIndex (a number) — always ASCII-safe.
+                        # sheetName is stored separately; frontend renders it if readable.
+                        [void]$items.Add([ordered]@{
+                            index=($items.Count+1); key='mergedCells'
+                            sheetName=$sname; sheetIndex=$sindex; range=$addr
+                            location="Sheet $sindex - Range $addr"
+                            source='Microsoft Excel Accessibility Checker'
+                        })
+                        if ($Debug) { [Console]::Error.WriteLine("[EXCEL OCC] mergedCells sheetIndex=$sindex sheetNameRaw=`"$sname`" range=$addr") }
+                    } catch {}
+                }
+            } catch {}
+        }
+        if ($items.Count -gt 0) { $occ['mergedCells'] = $items.ToArray() }
+        if ($Debug) { [Console]::Error.WriteLine("[EXCEL COM] mergedCells: $($items.Count) of $target") }
+    }
+
+    # ── Default sheet name ────────────────────────────────────────────────────
+    if ($Counts.Contains('sheetName') -and [int]$Counts['sheetName'] -gt 0) {
+        $target = [int]$Counts['sheetName']
+        $items  = [System.Collections.Generic.List[object]]::new()
+        $sheetIdx = 0
+        foreach ($sheet in $Wb.Worksheets) {
+            if ($items.Count -ge $target) { break }
+            $sheetIdx++
+            $sname  = try { $sheet.Name }        catch { '' }
+            $sindex = try { [int]$sheet.Index }  catch { $sheetIdx }
+            if ($sname -match '^(?:Sheet|Feuil|Hoja|Foglio|Blatt|Tabelle|Ark|Blad)\s*\d+$') {
+                [void]$items.Add([ordered]@{
+                    index=($items.Count+1); key='sheetName'
+                    sheetName=$sname; sheetIndex=$sindex; range=''
+                    location="Sheet $sindex"
+                    source='Microsoft Excel Accessibility Checker'
+                })
+            }
+        }
+        if ($items.Count -gt 0) { $occ['sheetName'] = $items.ToArray() }
+    }
+
+    # ── Missing alt text (charts, pictures, shapes) ───────────────────────────
+    if ($Counts.Contains('missingAltText') -and [int]$Counts['missingAltText'] -gt 0) {
+        $target = [int]$Counts['missingAltText']
+        $items  = [System.Collections.Generic.List[object]]::new()
+        $sheetIdx = 0
+        foreach ($sheet in $Wb.Worksheets) {
+            if ($items.Count -ge $target) { break }
+            $sheetIdx++
+            $sname  = try { $sheet.Name }       catch { '' }
+            $sindex = try { [int]$sheet.Index } catch { $sheetIdx }
+            foreach ($obj in $sheet.Shapes) {
+                if ($items.Count -ge $target) { break }
+                try {
+                    $alt = try { $obj.AlternativeText } catch { '' }
+                    $ttl = try { $obj.Title }           catch { '' }
+                    if (($alt -and $alt.Trim()) -or ($ttl -and $ttl.Trim())) { continue }
+                    $nm = try { $obj.Name } catch { 'Object' }
+                    [void]$items.Add([ordered]@{
+                        index=($items.Count+1); key='missingAltText'
+                        sheetName=$sname; sheetIndex=$sindex; range=''; objectName=$nm
+                        location="Sheet $sindex - $nm"
+                        source='Microsoft Excel Accessibility Checker'
+                    })
+                } catch {}
+            }
+        }
+        if ($items.Count -gt 0) { $occ['missingAltText'] = $items.ToArray() }
+    }
+
+    } catch {
+        if ($Debug) { [Console]::Error.WriteLine("[EXCEL COM] Unhandled exception in Get-Excel-COMOccurrences: $($_.Exception.Message)") }
+    }
+
+    return $occ
 }
 
 # --------------------------------------------------------------------------
@@ -416,6 +568,20 @@ try {
         $cap = [Math]::Min(199, $script:uiaTexts.Count - 1)
         $raw = if ($script:uiaTexts.Count -gt 0) { $script:uiaTexts.ToArray()[0..$cap] } else { @() }
 
+        # COM-based occurrence extraction (reads from $wb directly — works with all Office versions)
+        $comOcc   = Get-Excel-COMOccurrences -Wb $wb -Counts $parsed.counts -Debug:$DEBUG
+        $finalOcc = [ordered]@{}
+        foreach ($k in $comOcc.Keys) {
+            $arr = @($comOcc[$k])
+            if ($arr.Count -gt 0) { $finalOcc[$k] = $arr }
+        }
+        foreach ($k in $parsed.occurrences.Keys) {
+            if (-not $finalOcc.Contains($k) -or @($finalOcc[$k]).Count -eq 0) {
+                $arr = @($parsed.occurrences[$k])
+                if ($arr.Count -gt 0) { $finalOcc[$k] = $arr }
+            }
+        }
+
         $out = [ordered]@{
             ok            = $true
             engine        = 'excel-ui-automation'
@@ -424,6 +590,7 @@ try {
             executedMso   = $executedMso
             counts        = $parsed.counts
             statuses      = $parsed.statuses
+            occurrences   = $finalOcc
             rawOfficeText = $raw
         }
 
@@ -435,14 +602,14 @@ try {
             $out['parseTrace']          = $parsed.parseTrace.ToArray()
         }
 
-        $out | ConvertTo-Json -Depth 6 -Compress
+        [Console]::Out.WriteLine(($out | ConvertTo-Json -Depth 8 -Compress))
     }
 
 } catch {
-    [ordered]@{
+    [Console]::Out.WriteLine(([ordered]@{
         ok    = $false
         error = "Excel Accessibility Assistant UI could not be read: $($_.Exception.Message)"
-    } | ConvertTo-Json -Compress
+    } | ConvertTo-Json -Compress))
 } finally {
     if ($null -ne $wb) {
         try { $wb.Close($false) } catch {}    # close without saving

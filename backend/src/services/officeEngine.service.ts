@@ -1,10 +1,29 @@
 import type { OfficeLikeSummary, OfficeLikeSummaryItem, OfficeLikeSummaryStatus, ScanResult } from '../types/scan.types.js'
-import type { WorkerSuccess } from '../workers/powerpointWorker.js'
+import type { WorkerSuccess, PptxOccurrence } from '../workers/powerpointWorker.js'
 import type { WordWorkerSuccess } from '../workers/wordWorker.js'
 import type { ExcelWorkerSuccess } from '../workers/excelWorker.js'
 
-function item(label: string, status: OfficeLikeSummaryStatus, count: number, note?: string): OfficeLikeSummaryItem {
-  return { label, status, count, ...(note ? { note } : {}) }
+/** Extract location strings from any occurrence format:
+ *  - PptxOccurrence[] (from UIAutomation+COM pane clicking)
+ *  - OfficeOccurrenceItem[] (from COM enumeration — Word/Excel)
+ *  - string[] (legacy text-scan Pass 3)
+ */
+function extractLocationStrings(occ: unknown[] | undefined): string[] {
+  if (!occ?.length) return []
+  const first = occ[0]
+  if (typeof first === 'string') return occ as string[]
+  // Structured objects — extract .location field
+  return (occ as Array<{ location?: string }>)
+    .map(o => o?.location ?? '')
+    .filter(l => l.length > 0)
+}
+
+function item(label: string, status: OfficeLikeSummaryStatus, count: number, note?: string, locations?: string[]): OfficeLikeSummaryItem {
+  return {
+    label, status, count,
+    ...(note ? { note } : {}),
+    ...(locations?.length ? { locations } : {}),
+  }
 }
 
 /**
@@ -32,9 +51,11 @@ function buildWorkerOfficeLikeSummary(
   counts: Record<string, number>,
   statuses: Record<string, string>,
   xmlSummary: OfficeLikeSummary | undefined,
+  occurrences: Record<string, unknown[]> = {},
 ): OfficeLikeSummary {
-  const cnt = (key: string) => counts[key] ?? 0
-  const st  = (key: string, fallback: OfficeLikeSummaryStatus): OfficeLikeSummaryStatus => {
+  const cnt  = (key: string) => counts[key] ?? 0
+  const locs = (key: string) => extractLocationStrings(occurrences[key])
+  const st   = (key: string, fallback: OfficeLikeSummaryStatus): OfficeLikeSummaryStatus => {
     const v = statuses[key]
     if (v === 'failed' || v === 'passed' || v === 'manual' || v === 'partial' || v === 'not_checked') return v
     return fallback
@@ -58,60 +79,15 @@ function buildWorkerOfficeLikeSummary(
   const readingOrderCnt  = cnt('readingOrder')
 
   return {
-    contrast: item(
-      'ניגודיות טקסט קשה לקריאה',
-      contrastStatus,
-      contrastCount,
-      contrastStatus === 'passed'
-        ? 'נבדק על ידי Microsoft PowerPoint Accessibility Checker.'
-        : undefined,
-    ),
-
-    missingAltText: item(
-      'חסר טקסט חלופי',
-      missingAltCount > 0 ? 'failed' : 'passed',
-      missingAltCount,
-    ),
-
-    mediaCaptions: item(
-      'חסרות כתוביות לאודיו/וידאו',
-      mediaStatus,
-      mediaCount,
-      mediaStatus === 'passed'
-        ? 'נבדק על ידי Microsoft PowerPoint Accessibility Checker.'
-        : undefined,
-    ),
-
-    tableHeader: item(
-      'חסרת שורת כותרת בטבלה',
-      tableStatus,
-      tableCount,
-      tableStatus === 'passed'
-        ? 'נבדק על ידי Microsoft PowerPoint Accessibility Checker.'
-        : undefined,
-    ),
-
-    mergedCells: item(
-      'שימוש בתאים ממוזגים או מפוצלים',
-      mergedStatus,
-      mergedCount,
-      mergedStatus === 'passed'
-        ? 'נבדק על ידי Microsoft PowerPoint Accessibility Checker.'
-        : undefined,
-    ),
-
-    missingSlideTitle:   item('שקופית ללא כותרת',    missingSlideCnt > 0 ? 'failed' : 'passed', missingSlideCnt),
-    duplicateSlideTitle: item('כותרת שקופית כפולה',  dupTitleCnt > 0 ? 'failed' : 'passed',    dupTitleCnt),
-
-    readingOrder: item(
-      'בדיקת סדר קריאה',
-      'manual',
-      readingOrderCnt,
-      'בדיקה היוריסטית; אמתו את סדר הקריאה בחלונית Reading Order ב-PowerPoint לפני פרסום.',
-    ),
-
-    restrictedAccess: xmlSummary?.restrictedAccess ??
-      item('גישה מוגבלת למסמך', 'manual', 0, 'הרשאות מסמך אינן ניתנות לסריקה אוטומטית.'),
+    contrast:            item('ניגודיות טקסט קשה לקריאה',        contrastStatus,                          contrastCount,  contrastStatus === 'passed' ? 'נבדק על ידי Microsoft PowerPoint Accessibility Checker.' : undefined, locs('hardToReadText')),
+    missingAltText:      item('חסר טקסט חלופי',                   missingAltCount > 0 ? 'failed' : 'passed', missingAltCount, undefined, locs('missingAltText')),
+    mediaCaptions:       item('חסרות כתוביות לאודיו/וידאו',       mediaStatus,                             mediaCount,     mediaStatus === 'passed' ? 'נבדק על ידי Microsoft PowerPoint Accessibility Checker.' : undefined, locs('mediaCaptions')),
+    tableHeader:         item('חסרת שורת כותרת בטבלה',            tableStatus,                             tableCount,     tableStatus === 'passed' ? 'נבדק על ידי Microsoft PowerPoint Accessibility Checker.' : undefined, locs('missingTableHeader')),
+    mergedCells:         item('שימוש בתאים ממוזגים או מפוצלים',   mergedStatus,                            mergedCount,    mergedStatus === 'passed' ? 'נבדק על ידי Microsoft PowerPoint Accessibility Checker.' : undefined, locs('mergedCells')),
+    missingSlideTitle:   item('שקופית ללא כותרת',                  missingSlideCnt > 0 ? 'failed' : 'passed', missingSlideCnt, undefined, locs('missingSlideTitle')),
+    duplicateSlideTitle: item('כותרת שקופית כפולה',               dupTitleCnt > 0 ? 'failed' : 'passed',    dupTitleCnt,    undefined, locs('duplicateSlideTitle')),
+    readingOrder:        item('בדיקת סדר קריאה',                   'manual',                                readingOrderCnt, 'בדיקה היוריסטית; אמתו את סדר הקריאה בחלונית Reading Order ב-PowerPoint לפני פרסום.', locs('readingOrder')),
+    restrictedAccess: xmlSummary?.restrictedAccess ?? item('גישה מוגבלת למסמך', 'manual', 0, 'הרשאות מסמך אינן ניתנות לסריקה אוטומטית.'),
   }
 }
 
@@ -131,12 +107,15 @@ export function mergeWorkerIntoResult(
     workerResult.counts,
     workerResult.statuses,
     xmlResult.officeLikeSummary,
+    (workerResult.occurrences ?? {}) as Record<string, unknown[]>,
   )
   return {
     ...xmlResult,
-    engine:               'office-engine',
-    workerScannerVersion: workerResult.pptVersion,
+    engine:                     'office-engine',
+    workerScannerVersion:       workerResult.pptVersion,
     officeLikeSummary,
+    officeOccurrencesExtracted: workerResult.occurrencesExtracted ?? false,
+    officeOccurrencesNote:      workerResult.occurrencesNote ?? null,
   }
 }
 
@@ -172,99 +151,33 @@ export function markWorkerFallback(xmlResult: ScanResult, errorMessage: string):
 function buildWordWorkerOfficeLikeSummary(
   counts: Record<string, number>,
   statuses: Record<string, string>,
+  occurrences: Record<string, unknown[]> = {},
 ): OfficeLikeSummary {
-  const cnt = (key: string) => counts[key] ?? 0
-  const st  = (key: string, fallback: OfficeLikeSummaryStatus): OfficeLikeSummaryStatus => {
+  const cnt  = (key: string) => counts[key] ?? 0
+  const locs = (key: string) => extractLocationStrings(occurrences[key])
+  const st   = (key: string, fallback: OfficeLikeSummaryStatus): OfficeLikeSummaryStatus => {
     const v = statuses[key]
     if (v === 'failed' || v === 'passed' || v === 'manual' || v === 'partial' || v === 'not_checked') return v
     return fallback
   }
 
-  const contrastCount  = cnt('contrast')
-  const contrastStatus = st('contrast', contrastCount > 0 ? 'failed' : 'passed')
-
-  const altCount  = cnt('missingAltText')
-  const altStatus = st('missingAltText', altCount > 0 ? 'failed' : 'passed')
-
-  const tableCount  = cnt('tableHeader')
-  const tableStatus = st('tableHeader', tableCount > 0 ? 'failed' : 'passed')
-
-  const mergedCount  = cnt('mergedCells')
-  const mergedStatus = st('mergedCells', mergedCount > 0 ? 'failed' : 'passed')
-
-  const hyperlinkCount  = cnt('unclearHyperlinkText')
-  const hyperlinkStatus = st('unclearHyperlinkText', hyperlinkCount > 0 ? 'failed' : 'passed')
-
-  const docTitleCount  = cnt('documentTitle')
-  const docTitleStatus = st('documentTitle', docTitleCount > 0 ? 'failed' : 'passed')
-
-  const noHeadingsCount  = cnt('noHeadings')
-  const noHeadingsStatus = st('noHeadings', noHeadingsCount > 0 ? 'failed' : 'passed')
+  const contrastCount  = cnt('contrast');  const contrastStatus  = st('contrast',             contrastCount  > 0 ? 'failed' : 'passed')
+  const altCount       = cnt('missingAltText'); const altStatus  = st('missingAltText',        altCount       > 0 ? 'failed' : 'passed')
+  const tableCount     = cnt('tableHeader'); const tableStatus    = st('tableHeader',           tableCount     > 0 ? 'failed' : 'passed')
+  const mergedCount    = cnt('mergedCells'); const mergedStatus   = st('mergedCells',           mergedCount    > 0 ? 'failed' : 'passed')
+  const hyperlinkCount = cnt('unclearHyperlinkText'); const hyperlinkStatus = st('unclearHyperlinkText', hyperlinkCount > 0 ? 'failed' : 'passed')
+  const docTitleCount  = cnt('documentTitle'); const docTitleStatus = st('documentTitle',       docTitleCount  > 0 ? 'failed' : 'passed')
+  const noHeadingsCount = cnt('noHeadings'); const noHeadingsStatus = st('noHeadings',          noHeadingsCount > 0 ? 'failed' : 'passed')
 
   return {
-    contrast: item(
-      'ניגודיות טקסט קשה לקריאה',
-      contrastStatus,
-      contrastCount,
-      contrastStatus === 'passed'
-        ? 'נבדק על ידי Microsoft Word Accessibility Checker.'
-        : undefined,
-    ),
-
-    missingAltText: item(
-      'חסר טקסט חלופי',
-      altStatus,
-      altCount,
-      altStatus === 'passed'
-        ? 'נבדק על ידי Microsoft Word Accessibility Checker.'
-        : undefined,
-    ),
-
-    tableHeader: item(
-      'חסרת שורת כותרת בטבלה',
-      tableStatus,
-      tableCount,
-      tableStatus === 'passed'
-        ? 'נבדק על ידי Microsoft Word Accessibility Checker.'
-        : undefined,
-    ),
-
-    mergedCells: item(
-      'שימוש בתאים ממוזגים או מפוצלים',
-      mergedStatus,
-      mergedCount,
-      mergedStatus === 'passed'
-        ? 'נבדק על ידי Microsoft Word Accessibility Checker.'
-        : undefined,
-    ),
-
-    unclearHyperlinkText: item(
-      'טקסט קישור לא ברור',
-      hyperlinkStatus,
-      hyperlinkCount,
-    ),
-
-    documentTitle: item(
-      'כותרת מסמך חסרה',
-      docTitleStatus,
-      docTitleCount,
-    ),
-
-    noHeadings: item(
-      'אין כותרות במסמך',
-      noHeadingsStatus,
-      noHeadingsCount,
-      noHeadingsStatus === 'passed'
-        ? 'נבדק על ידי Microsoft Word Accessibility Checker.'
-        : 'נבדק על ידי Microsoft Word Accessibility Checker.',
-    ),
-
-    restrictedAccess: item(
-      'גישה מוגבלת למסמך',
-      'manual',
-      0,
-      'הרשאות מסמך אינן ניתנות לסריקה אוטומטית.',
-    ),
+    contrast:            item('ניגודיות טקסט קשה לקריאה',        contrastStatus,                          contrastCount,  contrastStatus === 'passed' ? 'נבדק על ידי Microsoft Word Accessibility Checker.' : undefined, locs('contrast')),
+    missingAltText:      item('חסר טקסט חלופי',                   altStatus,                               altCount,       altStatus === 'passed' ? 'נבדק על ידי Microsoft Word Accessibility Checker.' : undefined, locs('missingAltText')),
+    tableHeader:         item('חסרת שורת כותרת בטבלה',            tableStatus,                             tableCount,     tableStatus === 'passed' ? 'נבדק על ידי Microsoft Word Accessibility Checker.' : undefined, locs('tableHeader')),
+    mergedCells:         item('שימוש בתאים ממוזגים או מפוצלים',   mergedStatus,                            mergedCount,    mergedStatus === 'passed' ? 'נבדק על ידי Microsoft Word Accessibility Checker.' : undefined, locs('mergedCells')),
+    unclearHyperlinkText: item('טקסט קישור לא ברור',              hyperlinkStatus,                         hyperlinkCount, undefined, locs('unclearHyperlinkText')),
+    documentTitle:       item('כותרת מסמך חסרה',                  docTitleStatus,                          docTitleCount,  undefined, locs('documentTitle')),
+    noHeadings:          item('אין כותרות במסמך',                  noHeadingsStatus,                        noHeadingsCount, undefined, locs('noHeadings')),
+    restrictedAccess:    item('גישה מוגבלת למסמך',                 'manual',                                0, 'הרשאות מסמך אינן ניתנות לסריקה אוטומטית.'),
   }
 }
 
@@ -280,6 +193,7 @@ export function mergeWordWorkerIntoResult(
   const officeLikeSummary = buildWordWorkerOfficeLikeSummary(
     workerResult.counts,
     workerResult.statuses,
+    (workerResult.occurrences ?? {}) as Record<string, unknown[]>,
   )
   return {
     ...xmlResult,
@@ -320,87 +234,31 @@ export function markWordWorkerFallback(xmlResult: ScanResult, errorMessage: stri
 function buildExcelWorkerOfficeLikeSummary(
   counts: Record<string, number>,
   statuses: Record<string, string>,
+  occurrences: Record<string, unknown[]> = {},
 ): OfficeLikeSummary {
-  const cnt = (key: string) => counts[key] ?? 0
-  const st  = (key: string, fallback: OfficeLikeSummaryStatus): OfficeLikeSummaryStatus => {
+  const cnt  = (key: string) => counts[key] ?? 0
+  const locs = (key: string) => extractLocationStrings(occurrences[key])
+  const st   = (key: string, fallback: OfficeLikeSummaryStatus): OfficeLikeSummaryStatus => {
     const v = statuses[key]
     if (v === 'failed' || v === 'passed' || v === 'manual' || v === 'partial' || v === 'not_checked') return v
     return fallback
   }
 
-  const contrastCount  = cnt('contrast')
-  const contrastStatus = st('contrast', contrastCount > 0 ? 'failed' : 'passed')
-
-  const altCount  = cnt('missingAltText')
-  const altStatus = st('missingAltText', altCount > 0 ? 'failed' : 'passed')
-
-  const tableCount  = cnt('tableHeader')
-  const tableStatus = st('tableHeader', tableCount > 0 ? 'failed' : 'passed')
-
-  const mergedCount  = cnt('mergedCells')
-  const mergedStatus = st('mergedCells', mergedCount > 0 ? 'failed' : 'passed')
-
-  const hyperlinkCount  = cnt('unclearHyperlinkText')
-  const hyperlinkStatus = st('unclearHyperlinkText', hyperlinkCount > 0 ? 'failed' : 'passed')
-
-  const sheetNameCount  = cnt('sheetName')
-  const sheetNameStatus = st('sheetName', sheetNameCount > 0 ? 'failed' : 'passed')
+  const contrastCount  = cnt('contrast');  const contrastStatus  = st('contrast',             contrastCount  > 0 ? 'failed' : 'passed')
+  const altCount       = cnt('missingAltText'); const altStatus  = st('missingAltText',        altCount       > 0 ? 'failed' : 'passed')
+  const tableCount     = cnt('tableHeader'); const tableStatus    = st('tableHeader',           tableCount     > 0 ? 'failed' : 'passed')
+  const mergedCount    = cnt('mergedCells'); const mergedStatus   = st('mergedCells',           mergedCount    > 0 ? 'failed' : 'passed')
+  const hyperlinkCount = cnt('unclearHyperlinkText'); const hyperlinkStatus = st('unclearHyperlinkText', hyperlinkCount > 0 ? 'failed' : 'passed')
+  const sheetNameCount = cnt('sheetName'); const sheetNameStatus  = st('sheetName',             sheetNameCount > 0 ? 'failed' : 'passed')
 
   return {
-    contrast: item(
-      'ניגודיות טקסט קשה לקריאה',
-      contrastStatus,
-      contrastCount,
-      contrastStatus === 'passed'
-        ? 'נבדק על ידי Microsoft Excel Accessibility Checker.'
-        : undefined,
-    ),
-
-    missingAltText: item(
-      'חסר טקסט חלופי',
-      altStatus,
-      altCount,
-      altStatus === 'passed'
-        ? 'נבדק על ידי Microsoft Excel Accessibility Checker.'
-        : undefined,
-    ),
-
-    tableHeader: item(
-      'חסרת שורת כותרת בטבלה',
-      tableStatus,
-      tableCount,
-      tableStatus === 'passed'
-        ? 'נבדק על ידי Microsoft Excel Accessibility Checker.'
-        : undefined,
-    ),
-
-    mergedCells: item(
-      'שימוש בתאים ממוזגים או מפוצלים',
-      mergedStatus,
-      mergedCount,
-      mergedStatus === 'passed'
-        ? 'נבדק על ידי Microsoft Excel Accessibility Checker.'
-        : undefined,
-    ),
-
-    unclearHyperlinkText: item(
-      'טקסט קישור לא ברור',
-      hyperlinkStatus,
-      hyperlinkCount,
-    ),
-
-    sheetName: item(
-      'שם לשונית גיליון לא תיאורי',
-      sheetNameStatus,
-      sheetNameCount,
-    ),
-
-    restrictedAccess: item(
-      'גישה מוגבלת למסמך',
-      'manual',
-      0,
-      'הרשאות מסמך אינן ניתנות לסריקה אוטומטית.',
-    ),
+    contrast:            item('ניגודיות טקסט קשה לקריאה',        contrastStatus,   contrastCount,  contrastStatus === 'passed' ? 'נבדק על ידי Microsoft Excel Accessibility Checker.' : undefined, locs('contrast')),
+    missingAltText:      item('חסר טקסט חלופי',                   altStatus,        altCount,       altStatus === 'passed' ? 'נבדק על ידי Microsoft Excel Accessibility Checker.' : undefined, locs('missingAltText')),
+    tableHeader:         item('חסרת שורת כותרת בטבלה',            tableStatus,      tableCount,     tableStatus === 'passed' ? 'נבדק על ידי Microsoft Excel Accessibility Checker.' : undefined, locs('tableHeader')),
+    mergedCells:         item('שימוש בתאים ממוזגים או מפוצלים',   mergedStatus,     mergedCount,    mergedStatus === 'passed' ? 'נבדק על ידי Microsoft Excel Accessibility Checker.' : undefined, locs('mergedCells')),
+    unclearHyperlinkText: item('טקסט קישור לא ברור',              hyperlinkStatus,  hyperlinkCount, undefined, locs('unclearHyperlinkText')),
+    sheetName:           item('שם לשונית גיליון לא תיאורי',        sheetNameStatus,  sheetNameCount, undefined, locs('sheetName')),
+    restrictedAccess:    item('גישה מוגבלת למסמך',                 'manual',         0, 'הרשאות מסמך אינן ניתנות לסריקה אוטומטית.'),
   }
 }
 
@@ -416,6 +274,7 @@ export function mergeExcelWorkerIntoResult(
   const officeLikeSummary = buildExcelWorkerOfficeLikeSummary(
     workerResult.counts,
     workerResult.statuses,
+    (workerResult.occurrences ?? {}) as Record<string, unknown[]>,
   )
   return {
     ...xmlResult,

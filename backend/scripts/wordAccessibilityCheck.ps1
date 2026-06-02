@@ -136,9 +136,10 @@ function Test-PaneReady {
 # Parser with optional trace
 # --------------------------------------------------------------------------
 function Parse-CheckerTexts([bool]$Trace = $false) {
-    $counts     = [ordered]@{}
-    $statuses   = [ordered]@{}
-    $parseTrace = [System.Collections.Generic.List[object]]::new()
+    $counts         = [ordered]@{}
+    $statuses       = [ordered]@{}
+    $labelPositions = [ordered]@{}
+    $parseTrace     = [System.Collections.Generic.List[object]]::new()
 
     # Keys are the final officeLikeSummary key names (no translation layer needed for Word)
     $ruleMap = [ordered]@{
@@ -148,7 +149,7 @@ function Parse-CheckerTexts([bool]$Trace = $false) {
         mergedCells          = 'Merged (?:or Split )?[Cc]ells|Split [Cc]ells|Use of [Mm]erged'
         unclearHyperlinkText = 'Unclear [Hh]yperlink [Tt]ext|Unclear [Ll]ink [Tt]ext|Unclear [Hh]yperlink'
         documentTitle        = '(?:Missing )?[Dd]ocument [Tt]itle|No [Dd]ocument [Tt]itle'
-        noHeadings           = 'No [Hh]eadings?(?: in [Dd]ocument)?|Missing [Hh]eadings?|אין כותרות'
+        noHeadings           = 'No [Hh]eadings?(?: in [Dd]ocument)?|Missing [Hh]eadings?'
         restrictedAccess     = 'Restricted [Aa]ccess|Document [Rr]estrictions?'
     }
 
@@ -173,6 +174,7 @@ function Parse-CheckerTexts([bool]$Trace = $false) {
                 $n = [int]$next
                 if ($n -gt 0) { $counts[$key] = $n }
                 $found = $true
+                if (-not $labelPositions.Contains($key)) { $labelPositions[$key] = $i }
                 if ($Trace) {
                     $parseTrace.Add([ordered]@{
                         key = $key; pass = 1; sourceFormat = 'adjacent-label-count'
@@ -234,10 +236,180 @@ function Parse-CheckerTexts([bool]$Trace = $false) {
     }
     $statuses['restrictedAccess'] = 'manual'   # always manual - not exposed through this pane path
 
-    return [PSCustomObject]@{ counts = $counts; statuses = $statuses; parseTrace = $parseTrace }
+    # -- Pass 3: Per-occurrence item extraction -----------------------------------
+    # Items appear immediately after their category label+count in the UIA text.
+    # Collects up to 15 items per category; stops at the next category label.
+    $occurrences    = [ordered]@{}
+    $sortedLabelKeys = @($labelPositions.Keys | Sort-Object { $labelPositions[$_] })
+
+    for ($ki = 0; $ki -lt $sortedLabelKeys.Count; $ki++) {
+        $key    = $sortedLabelKeys[$ki]
+        $catPos = $labelPositions[$key]
+        $count  = if ($counts.Contains($key)) { [int]$counts[$key] } else { 0 }
+        if ($count -le 0) { continue }
+
+        $rangeEnd = $textLen
+        if ($ki + 1 -lt $sortedLabelKeys.Count) {
+            $nk = $sortedLabelKeys[$ki + 1]
+            $np = $labelPositions[$nk]
+            if ($np -gt $catPos) { $rangeEnd = $np }
+        }
+
+        $maxItems = [Math]::Min($count, 15)
+        $itemList = [System.Collections.Generic.List[string]]::new()
+
+        for ($j = ($catPos + 2); $j -lt $rangeEnd -and $itemList.Count -lt $maxItems; $j++) {
+            if ($j -ge $textLen) { break }
+            $t = $textArr[$j]
+            if (-not $t -or $t.Length -lt 2 -or $t.Length -gt 150) { continue }
+            if ($t -match '^\d+$') { continue }
+            if ($t.Length -le 3 -and [int][char]$t[0] -ge 0x2600) { continue }
+            if ($t -match '^(?:Errors?|Warnings?|Tips?|Inspection Results|Accessibility Checker|Accessibility Assistant|Looks good|No issues|Check)') { continue }
+            $hitCat = $false
+            foreach ($re in $ruleMap.GetEnumerator()) {
+                if (-not [regex]::IsMatch($t, '\d') -and [regex]::IsMatch($t, "(?:$($re.Value))", $ignCase)) {
+                    $hitCat = $true; break
+                }
+            }
+            if ($hitCat) { break }
+            [void]$itemList.Add($t)
+        }
+
+        if ($itemList.Count -gt 0) { $occurrences[$key] = $itemList.ToArray() }
+    }
+
+    return [PSCustomObject]@{ counts = $counts; statuses = $statuses; parseTrace = $parseTrace; occurrences = $occurrences }
 }
 
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# COM-based occurrence enumeration for Word
+# --------------------------------------------------------------------------
+function Get-Word-COMOccurrences {
+    param([object]$Doc, $Counts, [bool]$Debug)
+
+    $occ = [ordered]@{}
+    try {   # top-level guard — any COM exception returns empty occ instead of crashing the worker
+
+    # ── Missing alt text (inline shapes + floating shapes) ────────────────────
+    if ($Counts.Contains('missingAltText') -and [int]$Counts['missingAltText'] -gt 0) {
+        $target = [int]$Counts['missingAltText']
+        $items  = [System.Collections.Generic.List[object]]::new()
+
+        $inlines = try { $Doc.InlineShapes } catch { $null }
+        if ($null -ne $inlines) {
+            for ($i = 1; $i -le $inlines.Count -and $items.Count -lt $target; $i++) {
+                try {
+                    $sh  = $inlines.Item($i)
+                    $alt = try { $sh.AlternativeText } catch { '' }
+                    if ($alt -and $alt.Trim()) { continue }
+                    $pn  = try { [int]$sh.Range.Information(1) } catch { 0 }  # wdActiveEndPageNumber=1
+                    $nm  = "Picture $i"
+                    [void]$items.Add([ordered]@{
+                        index=($items.Count+1); key='missingAltText'
+                        pageNumber=$pn; objectName=$nm; location="Page $pn - $nm"
+                        source='Microsoft Word Accessibility Checker'
+                    })
+                } catch {}
+            }
+        }
+        $floats = try { $Doc.Shapes } catch { $null }
+        if ($null -ne $floats) {
+            for ($i = 1; $i -le $floats.Count -and $items.Count -lt $target; $i++) {
+                try {
+                    $sh  = $floats.Item($i)
+                    $alt = try { $sh.AlternativeText } catch { '' }
+                    $ttl = try { $sh.Title }           catch { '' }
+                    if (($alt -and $alt.Trim()) -or ($ttl -and $ttl.Trim())) { continue }
+                    $pn  = try { [int]$sh.Anchor.Information(1) } catch { 0 }
+                    $nm  = try { $sh.Name } catch { "Shape $i" }
+                    [void]$items.Add([ordered]@{
+                        index=($items.Count+1); key='missingAltText'
+                        pageNumber=$pn; objectName=$nm; location="Page $pn - $nm"
+                        source='Microsoft Word Accessibility Checker'
+                    })
+                } catch {}
+            }
+        }
+        if ($items.Count -gt 0) { $occ['missingAltText'] = $items.ToArray() }
+        if ($Debug) { [Console]::Error.WriteLine("[WORD COM] missingAltText: $($items.Count) of $target") }
+    }
+
+    # ── Merged cells ──────────────────────────────────────────────────────────
+    if ($Counts.Contains('mergedCells') -and [int]$Counts['mergedCells'] -gt 0) {
+        $target = [int]$Counts['mergedCells']
+        $items  = [System.Collections.Generic.List[object]]::new()
+        $tables = try { $Doc.Tables } catch { $null }
+        $tNum   = 0
+        if ($null -ne $tables) {
+            for ($t = 1; $t -le $tables.Count -and $items.Count -lt $target; $t++) {
+                try {
+                    $tbl  = $tables.Item($t); $tNum++
+                    $pn   = try { [int]$tbl.Range.Information(1) } catch { 0 }
+                    for ($r = 1; $r -le $tbl.Rows.Count -and $items.Count -lt $target; $r++) {
+                        for ($c = 1; $c -le $tbl.Columns.Count -and $items.Count -lt $target; $c++) {
+                            try {
+                                $cell = $tbl.Cell($r, $c)
+                                if ($cell.MergeCells) {
+                                    [void]$items.Add([ordered]@{
+                                        index=($items.Count+1); key='mergedCells'
+                                        pageNumber=$pn; objectName="Table $tNum"
+                                        location="Page $pn - Table $tNum (Row $r Col $c)"
+                                        source='Microsoft Word Accessibility Checker'
+                                    })
+                                }
+                            } catch {}
+                        }
+                    }
+                } catch {}
+            }
+        }
+        if ($items.Count -gt 0) { $occ['mergedCells'] = $items.ToArray() }
+        if ($Debug) { [Console]::Error.WriteLine("[WORD COM] mergedCells: $($items.Count) of $target") }
+    }
+
+    # ── No headings ───────────────────────────────────────────────────────────
+    if ($Counts.Contains('noHeadings') -and [int]$Counts['noHeadings'] -gt 0) {
+        # Document-level issue: the whole document has no heading styles
+        $occ['noHeadings'] = @([ordered]@{
+            index=1; key='noHeadings'; pageNumber=0; objectName='Entire document'
+            location='Entire document - No headings defined'
+            source='Microsoft Word Accessibility Checker'
+        })
+    }
+
+    # ── Unclear hyperlink text ────────────────────────────────────────────────
+    if ($Counts.Contains('unclearHyperlinkText') -and [int]$Counts['unclearHyperlinkText'] -gt 0) {
+        $target  = [int]$Counts['unclearHyperlinkText']
+        $items   = [System.Collections.Generic.List[object]]::new()
+        $badPat  = '^(?:click here|here|link|this|read more|more)$'
+        $hypers  = try { $Doc.Hyperlinks } catch { $null }
+        if ($null -ne $hypers) {
+            foreach ($hl in $hypers) {
+                if ($items.Count -ge $target) { break }
+                try {
+                    $disp = try { $hl.TextToDisplay.Trim() } catch { '' }
+                    if (-not $disp -or -not [regex]::IsMatch($disp, $badPat, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) { continue }
+                    $pn   = try { [int]$hl.Range.Information(1) } catch { 0 }
+                    [void]$items.Add([ordered]@{
+                        index=($items.Count+1); key='unclearHyperlinkText'
+                        pageNumber=$pn; objectName=$disp
+                        location="Page $pn - Hyperlink"
+                        source='Microsoft Word Accessibility Checker'
+                    })
+                } catch {}
+            }
+        }
+        if ($items.Count -gt 0) { $occ['unclearHyperlinkText'] = $items.ToArray() }
+    }
+
+    } catch {
+        if ($Debug) { [Console]::Error.WriteLine("[WORD COM] Unhandled exception in Get-Word-COMOccurrences: $($_.Exception.Message)") }
+    }
+
+    return $occ
+}
+
 # Input validation
 # --------------------------------------------------------------------------
 if (-not (Test-Path $FilePath)) {
@@ -422,6 +594,21 @@ try {
         $cap = [Math]::Min(199, $script:uiaTexts.Count - 1)
         $raw = if ($script:uiaTexts.Count -gt 0) { $script:uiaTexts.ToArray()[0..$cap] } else { @() }
 
+        # COM-based occurrence extraction (reads from $doc directly — works with all Office versions)
+        $comOcc   = Get-Word-COMOccurrences -Doc $doc -Counts $parsed.counts -Debug:$DEBUG
+        $finalOcc = [ordered]@{}
+        # COM results take priority; text-scan (Pass 3) fills gaps
+        foreach ($k in $comOcc.Keys) {
+            $arr = @($comOcc[$k])
+            if ($arr.Count -gt 0) { $finalOcc[$k] = $arr }
+        }
+        foreach ($k in $parsed.occurrences.Keys) {
+            if (-not $finalOcc.Contains($k) -or @($finalOcc[$k]).Count -eq 0) {
+                $arr = @($parsed.occurrences[$k])
+                if ($arr.Count -gt 0) { $finalOcc[$k] = $arr }
+            }
+        }
+
         $out = [ordered]@{
             ok            = $true
             engine        = 'word-ui-automation'
@@ -430,6 +617,7 @@ try {
             executedMso   = $executedMso
             counts        = $parsed.counts
             statuses      = $parsed.statuses
+            occurrences   = $finalOcc
             rawOfficeText = $raw
         }
 
@@ -441,7 +629,7 @@ try {
             $out['parseTrace']          = $parsed.parseTrace.ToArray()
         }
 
-        $out | ConvertTo-Json -Depth 6 -Compress
+        $out | ConvertTo-Json -Depth 8 -Compress
     }
 
 } catch {

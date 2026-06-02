@@ -7,6 +7,8 @@ import {
   OFFICE_KEY_WCAG,
   OFFICE_KEY_FIX_STEPS,
   isGenericCheckedByNote,
+  formatOccurrenceLocation,
+  getShapeTypeHint,
 } from '../utils/officeLikeReport.js'
 
 // ── Known checks per file type (used for XML / non-office-engine results)
@@ -153,13 +155,101 @@ function ManualReviewRow({ label, note }) {
   )
 }
 
+// ── Occurrence card — shown when Office Checker returned exact item locations ──
+
+// ── Collapsible occurrence card ───────────────────────────────────────────────
+// Collapsed by default — click the row to open details for that occurrence only.
+// isOpen / onToggle are controlled by the parent group (one open at a time).
+
+function OccurrenceCard({ index, total, location, impact, recommendation, wcag, fixSteps, isOpen, onToggle }) {
+  const displayLoc = formatOccurrenceLocation(location)
+  const hint       = getShapeTypeHint(location)
+
+  return (
+    <article className={`occ-card${isOpen ? ' occ-card--open' : ''}`}>
+      <button
+        className="occ-card__row"
+        type="button"
+        onClick={onToggle}
+        aria-expanded={isOpen}
+      >
+        <span className="occ-card__num">{index + 1} / {total}</span>
+        <span className="occ-card__loc">{displayLoc}</span>
+        <span className="occ-card__toggle" aria-hidden="true">
+          {isOpen ? '▲' : '▼'} פירוט ותיקון
+        </span>
+      </button>
+
+      <div className={`occ-card__details${isOpen ? '' : ' occ-card__details--hidden'}`}>
+        {hint && <p className="occ-card__hint">{hint}</p>}
+        <dl className="occ-card__body">
+          {impact && <div><dt>השפעה</dt><dd>{impact}</dd></div>}
+          {recommendation && <div><dt>המלצה</dt><dd>{recommendation}</dd></div>}
+          {wcag && wcag !== '—' && (
+            <div>
+              <dt><span dir="ltr">WCAG</span> · ת&quot;י&nbsp;5568</dt>
+              <dd dir="ltr" className="wcag-ltr">{wcag}</dd>
+            </div>
+          )}
+          {fixSteps?.length > 0 && (
+            <div className="occ-fix-row">
+              <dt>שלבי תיקון</dt>
+              <dd>
+                <ol className="fix-steps__list">
+                  {fixSteps.map((s, i) => <li key={i} className="fix-steps__item">{s}</li>)}
+                </ol>
+              </dd>
+            </div>
+          )}
+        </dl>
+      </div>
+    </article>
+  )
+}
+
+// ── No-locations block — honest message when Office did not expose item names ──
+
+function NoLocationsBlock({ count: _count, impact, recommendation, wcag, fixSteps }) {
+  // Show fix details as the main content — no large "locations unavailable" banner.
+  // A small muted hint appears at the bottom so the user knows locations are not listed.
+  return (
+    <div className="occ-no-locs">
+      <dl className="occ-card__body">
+        {impact && <div><dt>השפעה</dt><dd>{impact}</dd></div>}
+        {recommendation && <div><dt>המלצה</dt><dd>{recommendation}</dd></div>}
+        {wcag && wcag !== '—' && (
+          <div>
+            <dt><span dir="ltr">WCAG</span> · ת&quot;י&nbsp;5568</dt>
+            <dd dir="ltr" className="wcag-ltr">{wcag}</dd>
+          </div>
+        )}
+        {fixSteps?.length > 0 && (
+          <div className="occ-fix-row">
+            <dt>שלבי תיקון</dt>
+            <dd>
+              <ol className="fix-steps__list">
+                {fixSteps.map((s, i) => <li key={i} className="fix-steps__item">{s}</li>)}
+              </ol>
+            </dd>
+          </div>
+        )}
+      </dl>
+      <p className="occ-no-locs__hint">מיקומים מדויקים לא זמינים.</p>
+    </div>
+  )
+}
+
 // ── Office Engine expandable check row ─────────────────────────────────────────
-// Clicking a failed/manual row expands to show impact, WCAG, recommendation
-// and step-by-step fix instructions. Data comes from officeLikeReport.js maps —
-// never from XML scan output.
+// Group row shows label + count. Expanding shows either:
+//   A. Individual OccurrenceCard per item (when Office returned exact locations)
+//   B. NoLocationsBlock with honest message + general fix steps
+// Data comes exclusively from officeLikeReport.js maps — never from XML output.
 
 function OfficeLikeCheckRow({ item, itemKey, isExpanded, onToggle }) {
-  // Passed rows are static — no expandable details needed
+  // Track which occurrence index is expanded — one at a time per group.
+  const [openOccIdx, setOpenOccIdx] = useState(null)
+  const toggleOcc = (i) => setOpenOccIdx(prev => prev === i ? null : i)
+
   if (item.status === 'passed') {
     return (
       <div className="ap-check-pass">
@@ -181,6 +271,7 @@ function OfficeLikeCheckRow({ item, itemKey, isExpanded, onToggle }) {
   const wcag           = OFFICE_KEY_WCAG[itemKey]
   const fixSteps       = OFFICE_KEY_FIX_STEPS[itemKey]
   const recommendation = OFFICE_KEY_RECOMMENDATION[itemKey]
+  const locations      = item.locations ?? []
 
   return (
     <div className={`ap-issue${isExpanded ? ' ap-issue--open' : ''}`}>
@@ -203,30 +294,39 @@ function OfficeLikeCheckRow({ item, itemKey, isExpanded, onToggle }) {
           {item.note && !isGenericCheckedByNote(item.note) && (
             <p className="ap-location ap-location--single">{item.note}</p>
           )}
-          <dl className="ap-issue__meta">
-            {impact && (
-              <div><dt>השפעה</dt><dd>{impact}</dd></div>
-            )}
-            {recommendation && (
-              <div><dt>המלצה</dt><dd>{recommendation}</dd></div>
-            )}
-            {wcag && wcag !== '—' && (
-              <div>
-                <dt>WCAG · ת"י&nbsp;5568</dt>
-                <dd dir="ltr" className="wcag-ltr">{wcag}</dd>
-              </div>
-            )}
-            {fixSteps?.length > 0 && (
-              <div className="ap-fix-steps-row">
-                <dt>שלבי תיקון</dt>
-                <dd>
-                  <ol className="ap-fix-steps">
-                    {fixSteps.map((step, i) => <li key={i}>{step}</li>)}
-                  </ol>
-                </dd>
-              </div>
-            )}
-          </dl>
+
+          {locations.length > 0 ? (
+            <div className="occ-list">
+              {locations.map((loc, i) => (
+                <OccurrenceCard
+                  key={i}
+                  index={i}
+                  total={item.count}
+                  location={loc}
+                  impact={impact}
+                  recommendation={recommendation}
+                  wcag={wcag}
+                  fixSteps={fixSteps}
+                  isOpen={openOccIdx === i}
+                  onToggle={() => toggleOcc(i)}
+                />
+              ))}
+              {item.count > locations.length && (
+                <p className="occ-more">
+                  רק {locations.length} מתוך {item.count} מיקומים מדויקים חולצו.
+                  {' '}פתחו את הקובץ לרשימה המלאה.
+                </p>
+              )}
+            </div>
+          ) : (
+            <NoLocationsBlock
+              count={item.count}
+              impact={impact}
+              recommendation={recommendation}
+              wcag={wcag}
+              fixSteps={fixSteps}
+            />
+          )}
         </div>
       )}
     </div>
@@ -337,21 +437,13 @@ export default function AssistantPanel({
 
     return (
       <div className="assistant-panel" dir="rtl">
-        {/* Worker error banner */}
+        {/* Worker error banner — engine name intentionally omitted */}
         {workerError && (
           <div className="ap-worker-warning" role="alert" dir="rtl">
             <span className="ap-worker-warning__icon" aria-hidden="true">⚠</span>
             <span className="ap-worker-warning__text">
-              מנוע {fileType === 'docx' ? 'Word' : fileType === 'xlsx' ? 'Excel' : 'PowerPoint'} לא זמין — הנתונים מבוססים על ניתוח XML.
+              הנתונים מבוססים על ניתוח XML/WCAG.
             </span>
-          </div>
-        )}
-
-        {/* Engine badge */}
-        {engine === 'office-engine' && !workerError && (
-          <div className="ap-engine-badge" dir="rtl">
-            <span className="ap-engine-badge__icon" aria-hidden="true">✓</span>
-            מופעל על ידי {label}
           </div>
         )}
 

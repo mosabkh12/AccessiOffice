@@ -47,6 +47,8 @@ export interface WordWorkerSuccess {
    *       unclearHyperlinkText | documentTitle | noHeadings | restrictedAccess
    */
   statuses: Record<string, string>
+  /** Per-occurrence items: structured objects from COM enumeration OR plain strings from text-scan. */
+  occurrences?: Record<string, unknown[]>
   /** Raw UIAutomation text collected from the pane (capped at 200 entries) */
   rawOfficeText: string[]
   // Debug-only fields — present when WORD_WORKER_DEBUG=true

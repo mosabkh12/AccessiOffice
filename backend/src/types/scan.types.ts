@@ -61,6 +61,8 @@ export interface OfficeLikeSummaryItem {
   status: OfficeLikeSummaryStatus
   count: number
   note?: string
+  /** Per-occurrence item names extracted from the Office Accessibility Checker pane. */
+  locations?: string[]
 }
 
 /**
@@ -103,4 +105,8 @@ export interface ScanResult {
   workerError?: string
   /** Office version string reported by the COM worker (e.g. "16.0") */
   workerScannerVersion?: string
+  /** true when PPTX occurrence extraction via UIAutomation+COM succeeded for at least one key */
+  officeOccurrencesExtracted?: boolean
+  /** Explanation when officeOccurrencesExtracted is false */
+  officeOccurrencesNote?: string | null
 }

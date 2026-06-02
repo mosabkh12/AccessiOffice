@@ -953,6 +953,124 @@ h3 { font-size: 1.15rem; }
   gap: 0.65rem;
 }
 
+/* ── Occurrence cards (AssistantPanel + ReportPage) ─────────────────────────── */
+
+.occ-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.4rem 1.25rem 0.65rem;
+}
+.occ-list--report { padding: 0.4rem 0 0.4rem; }
+
+.occ-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+.occ-card--report { background: #fafbfc; }
+.occ-card--open  { border-color: var(--accent, #3b5bdb); }
+
+/* ── Clickable row (replaces old static header) ─── */
+.occ-card__row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.42rem 0.85rem;
+  background: var(--accent-soft, #f0f4ff);
+  border: none;
+  border-bottom: 1px solid transparent;
+  cursor: pointer;
+  font-size: 0.84rem;
+  text-align: right;
+  color: var(--text);
+  transition: background 0.12s;
+}
+.occ-card__row:hover { background: #e0e7ff; }
+.occ-card--open .occ-card__row {
+  background: #dbeafe;
+  border-bottom-color: var(--border);
+}
+.occ-card__num {
+  font-weight: 700;
+  color: var(--navy-mid, #1e3a5f);
+  min-width: 2.8rem;
+  flex-shrink: 0;
+}
+.occ-card__loc  { font-weight: 500; flex: 1; word-break: break-word; text-align: right; }
+.occ-card__toggle {
+  margin-inline-start: auto;
+  font-size: 0.74rem;
+  color: var(--accent, #3b5bdb);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── Collapsible details ─── */
+.occ-card__details { padding: 0; }
+.occ-card__details--hidden { display: none; }
+
+.occ-card__hint {
+  font-size: 0.78rem;
+  color: #6b7280;
+  font-style: italic;
+  padding: 0.35rem 0.85rem 0;
+  margin: 0;
+}
+
+.occ-card__body {
+  padding: 0.45rem 0.85rem 0.6rem;
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.86rem;
+}
+.occ-card__body div { display: flex; gap: 0.5rem; align-items: flex-start; }
+.occ-card__body dt { font-weight: 600; color: var(--text-muted); min-width: 4.5rem; flex-shrink: 0; font-size: 0.78rem; }
+.occ-card__body dd { margin: 0; line-height: 1.45; }
+
+.occ-fix-row { align-items: flex-start !important; flex-direction: column; gap: 0.2rem !important; }
+.occ-fix-row dt { min-width: unset !important; }
+
+.occ-more {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 0.2rem 0.25rem;
+}
+
+/* No-locations block */
+.occ-no-locs { padding: 0.55rem 1.25rem 0.75rem; }
+.occ-no-locs--report { padding: 0.5rem 0; }
+
+/* .occ-no-locs__msg is no longer rendered — kept in CSS for legacy compatibility */
+.occ-no-locs__msg { display: none; }
+
+.occ-no-locs__hint {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 0.35rem 0 0.1rem;
+  margin: 0;
+}
+
+.report-issue-card__category {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 0.3rem 0 0.1rem;
+}
+
+/* Print: all occurrence details fully visible, toggle button hidden */
+@media print {
+  .occ-card, .occ-no-locs, .occ-list { display: block !important; }
+  .occ-card { page-break-inside: avoid; }
+  .occ-card__details--hidden { display: block !important; }
+  .occ-card__toggle { display: none !important; }
+  .occ-card__row { cursor: default; background: var(--accent-soft, #f0f4ff) !important; }
+  .occ-no-locs__msg { background: #f0f4ff !important; border: 1px solid #c7d2fe; }
+}
+
 /* Fix steps inside report cards and AssistantPanel expanded rows */
 .fix-steps {
   display: grid;
